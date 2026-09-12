@@ -15,8 +15,11 @@ python3 /var/lib/hermes/skills/pruce-tasks/scripts/state.py read
    only wording. Resume it by ID. If two tasks could match and the distinction
    changes the work, ask one short question. Do not create a task for every
    greeting, general question, or hypothetical example.
-2. Identify the outcome the user actually wants. Save a real open loop promptly,
-   even if details are missing. Use a concrete title and next step; unknown
+2. Identify the outcome or ongoing subject occupying the user's attention.
+   `title` names that open loop, not just today's action: "Candidatura à vaga
+   de estágio" rather than "Mandar currículo". `next_step` names the concrete
+   action or external response currently needed to advance it. Save promptly,
+   even if details are missing; unknown
    deadlines stay null. Do not split one responsibility into a project tree.
 3. Use known context first. Ask only for the information needed for the next
    useful step. Resolve ambiguous dates/timezones before scheduling anything
@@ -40,10 +43,37 @@ python3 /var/lib/hermes/skills/pruce-tasks/scripts/state.py read
 | in_progress | Concrete work has started. Does not imply a background worker. |
 | waiting_for_user | The next step needs the user's information, decision, authorization or action. Say exactly what in next_step. |
 | waiting_for_third_party | An external request was actually made; next_step identifies whose response is awaited. Preparation alone does not qualify. |
-| completed | The agreed outcome is achieved, supported by a tool result or explicit user confirmation. |
+| completed | The final outcome is confirmed, or the user explicitly chooses to stop tracking this subject. Evidence must support that closure, not merely a finished step. |
 
-An exam-preparation task stays open after drafting a plan. A CV-submission task
-stays open after improving the CV. If the request was only to write a draft,
+Finishing a next_step does not necessarily close the open loop. After an action,
+check what remains before choosing status. If the user awaits a company,
+professor, university, support team, shop or public agency, use
+`waiting_for_third_party`, never `completed`. This applies equally to
+applications, credit transfers, refunds, cancellations, support, documents,
+registrations and other administrative processes. Do not invent ongoing work
+beyond what the user wants tracked.
+
+Example: "Já mandei o currículo para a empresa. Agora estou esperando eles
+responderem" updates the SAME record to:
+
+```json
+{"id":"<saved id>","title":"Candidatura à vaga de estágio","status":"waiting_for_third_party","next_step":"Aguardar resposta da empresa","evidence":{"kind":"user_confirmation","detail":"Usuário confirmou que enviou o currículo e aguarda resposta da empresa."}}
+```
+
+Sending the CV is evidence of submission, not of the application's closure.
+Only close when its final outcome is confirmed or the user explicitly says
+they no longer want it tracked (record that choice, not a claim of success).
+On closure set `next_step` to exactly `Nenhuma ação pendente.`. This internal
+convention prevents a completed record from retaining an external wait; the
+writer rejects other next_step text for completed records. Never replace an
+actual wait with that phrase just to pass validation: save waiting status.
+When resuming an older record marked completed with a remaining external wait,
+use the conversation/evidence to correct that same ID, including its title
+when it names only the finished step. Do not duplicate it or silently discard
+the wait. Existing records remain readable; the check applies to task writes.
+
+An exam-preparation task stays open after drafting a plan. An application
+stays open after sending the CV if a response is awaited. If the request was only to write a draft,
 producing and verifying that draft can complete that narrower task. Never
 silently shrink the agreed outcome to make it look completed. If an error is
 discovered, reopen the same task and explain the correction.
@@ -62,7 +92,7 @@ an unquoted heredoc, shell substitutions or `echo` with user text.
 
 ```sh
 python3 /var/lib/hermes/skills/pruce-tasks/scripts/state.py create <<'PRUCE_JSON'
-{"title":"Pedir aproveitamento de matéria","next_step":"Identificar a disciplina e o procedimento informado pela universidade"}
+{"title":"Aproveitamento de matéria","next_step":"Identificar a disciplina e o procedimento informado pela universidade"}
 PRUCE_JSON
 ```
 

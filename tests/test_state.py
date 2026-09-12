@@ -49,9 +49,78 @@ class StateTests(unittest.TestCase):
                 state.run(self.path, "update", {"id": task["id"], "status": status})
             self.assertEqual(before, self.path.read_bytes())
             evidence = {"kind": "user_confirmation", "detail": "Confirmação explícita do resultado desta etapa."}
-            state.run(self.path, "update", {"id": task["id"], "status": status, "evidence": evidence})
+            state.run(self.path, "update", {"id": task["id"], "status": status, "evidence": evidence,
+                      "next_step": "Nenhuma ação pendente." if status == "completed" else "Aguardar resposta do professor"})
         reopened = state.run(self.path, "update", {"id": task["id"], "status": "needs_action"})
         self.assertIsNone(reopened["evidence"])
+
+    def test_sent_cv_keeps_application_open_until_final_outcome(self):
+        task = self.create("Mandar currículo para vaga de estágio")
+        pending = state.run(self.path, "update", {
+            "id": task["id"], "title": "Candidatura à vaga de estágio",
+            "status": "waiting_for_third_party", "next_step": "Aguardar resposta da empresa",
+            "evidence": {"kind": "user_confirmation", "detail": "Enviei o currículo e estou esperando eles responderem."},
+        })
+        self.assertEqual(state.read(self.path)["tasks"], [pending])
+        self.assertEqual(pending["status"], "waiting_for_third_party")
+        closed = state.run(self.path, "update", {
+            "id": task["id"], "status": "completed", "next_step": "Nenhuma ação pendente.",
+            "evidence": {"kind": "user_confirmation", "detail": "A empresa encerrou a seleção; minha candidatura terminou."},
+        })
+        self.assertEqual(closed["status"], "completed")
+        self.assertEqual(len(state.read(self.path)["tasks"]), 1)
+
+    def test_completed_rejects_external_wait_and_preserves_saved_state(self):
+        task = self.create("Reembolso da compra")
+        before = self.path.read_bytes()
+        for next_step in (
+            "Nenhuma ação pendente; aguardando retorno da empresa",
+            "Aguardar resposta da faculdade", "Esperar o estorno da loja",
+            "Support will get back to me", "O órgão ainda precisa emitir o documento",
+        ):
+            with self.subTest(next_step=next_step), self.assertRaisesRegex(ValueError, "waiting_for_third_party"):
+                state.run(self.path, "update", {
+                    "id": task["id"], "status": "completed", "next_step": next_step,
+                    "evidence": {"kind": "user_confirmation", "detail": "Já enviei a solicitação."},
+                })
+            self.assertEqual(self.path.read_bytes(), before)
+
+    def test_completed_cannot_receive_wait_in_partial_update(self):
+        task = self.create("Cancelamento de assinatura")
+        state.run(self.path, "update", {
+            "id": task["id"], "status": "completed", "next_step": "Nenhuma ação pendente.",
+            "evidence": {"kind": "tool_result", "detail": "Serviço confirmou assinatura cancelada, protocolo 123."},
+        })
+        before = self.path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "waiting_for_third_party"):
+            state.run(self.path, "update", {"id": task["id"], "next_step": "Aguardar confirmação do suporte"})
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_user_can_explicitly_stop_tracking_without_success(self):
+        task = self.create("Inscrição no programa de estágio")
+        closed = state.run(self.path, "update", {
+            "id": task["id"], "status": "completed", "next_step": "Nenhuma ação pendente.",
+            "evidence": {"kind": "user_confirmation", "detail": "Não quero mais acompanhar essa inscrição."},
+        })
+        self.assertEqual(closed["status"], "completed")
+        self.assertIn("Não quero mais", closed["evidence"]["detail"])
+
+    def test_legacy_completed_wait_is_readable_and_repairable(self):
+        task = self.create("Mandar currículo para vaga de estágio")
+        legacy = state.read(self.path)
+        legacy["tasks"][0].update({
+            "status": "completed", "next_step": "Nenhuma ação pendente; aguardando retorno da empresa",
+            "evidence": {"kind": "user_confirmation", "detail": "Usuário confirmou que enviou o currículo."},
+        })
+        self.path.write_text(json.dumps(legacy))
+        self.assertEqual(state.read(self.path), legacy)
+        fixed = state.run(self.path, "update", {
+            "id": task["id"], "title": "Candidatura à vaga de estágio",
+            "status": "waiting_for_third_party", "next_step": "Aguardar resposta da empresa",
+            "evidence": legacy["tasks"][0]["evidence"],
+        })
+        self.assertEqual(state.read(self.path)["tasks"], [fixed])
+        self.assertEqual(fixed["id"], task["id"])
 
     def test_invalid_mutations_preserve_existing_state(self):
         task = self.create()

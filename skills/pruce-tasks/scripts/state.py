@@ -14,6 +14,7 @@ STATUSES = {
     "waiting_for_third_party", "completed",
 }
 EVIDENCE_STATES = {"completed", "waiting_for_third_party"}
+COMPLETED_NEXT_STEP = "Nenhuma ação pendente."
 DEFAULT_PATH = Path(os.environ.get("HERMES_HOME", "/var/lib/hermes")) / "pruce/state.json"
 
 
@@ -119,6 +120,12 @@ def apply(state, command, data):
             task["evidence"] = None
         task.update(data)
         result = task
+    # Write-time convention, not a language classifier. Keep legacy records
+    # readable so the agent can repair the same ID without a data migration.
+    if command != "profile" and result["status"] == "completed":
+        require(result["next_step"] == COMPLETED_NEXT_STEP,
+                "completed requires next_step 'Nenhuma ação pendente.'; "
+                "if awaiting an external response, use waiting_for_third_party")
     validate(state)
     return result
 
