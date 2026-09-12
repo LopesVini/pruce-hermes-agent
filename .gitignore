@@ -1,0 +1,7 @@
+/plow-credentials
+/.env
+/.env.*
+__pycache__/
+*.pyc
+/state.json
+/state.json.lock

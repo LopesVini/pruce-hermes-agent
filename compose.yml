@@ -1,0 +1,16 @@
+name: pruce
+services:
+  agent:
+    build: .
+    volumes:
+      - type: bind
+        source: ../plow-hermes-agent/plow-credentials
+        target: /var/lib/plow/credentials.host
+        read_only: true
+        bind:
+          create_host_path: false
+      - agent-home:/var/lib/hermes
+    stop_grace_period: 35s
+
+volumes:
+  agent-home:

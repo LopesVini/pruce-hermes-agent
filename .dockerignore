@@ -1,0 +1,12 @@
+# Only product content enters the build context; no credentials or runtime data.
+**
+!Dockerfile
+!runtime/
+!runtime/persona.md
+!skills/
+!skills/pruce-onboarding/
+!skills/pruce-onboarding/SKILL.md
+!skills/pruce-tasks/
+!skills/pruce-tasks/SKILL.md
+!skills/pruce-tasks/scripts/
+!skills/pruce-tasks/scripts/state.py
