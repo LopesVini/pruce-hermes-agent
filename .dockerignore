@@ -10,3 +10,12 @@
 !skills/pruce-tasks/SKILL.md
 !skills/pruce-tasks/scripts/
 !skills/pruce-tasks/scripts/state.py
+!vendor/
+!vendor/client.pin
+!image/
+!image/s6-overlay/
+!image/s6-overlay/**
+!LICENSE
+!NOTICE
+!LICENSES/
+!LICENSES/Apache-2.0.txt

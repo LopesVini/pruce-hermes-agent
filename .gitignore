@@ -5,3 +5,7 @@ __pycache__/
 *.pyc
 /state.json
 /state.json.lock
+/.agent-index/
+/.agent-index.json
+/.agent-index-state.json
+/.agent-index.lock

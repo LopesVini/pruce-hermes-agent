@@ -1,0 +1,48 @@
+#!/bin/sh
+# Copyright 2026 The Plow Collective, Inc.
+# Adapted for Prucê from life-assistant-hermes-agent; Apache-2.0.
+# The official client owns identity exchange, install IDs and accounting.
+PATH=/command:/usr/local/bin:/usr/bin:/bin
+export PATH
+AGENT_ID=$(cat /run/s6/container_environment/AGENT_ID 2>/dev/null || true)
+if [ -z "$AGENT_ID" ]; then
+  echo "agent-index: no AGENT_ID; registration and reporting disabled" >&2
+  exec /bin/sleep 86400
+fi
+
+# Explicit environment: status and reporting never inherit the Plow bearer.
+# HOME and HERMES_HOME agree so all client state stays on the existing volume.
+client() {
+  /command/s6-setuidgid hermes env -i PATH="$PATH" \
+    HOME=/var/lib/hermes HERMES_HOME=/var/lib/hermes AGENT_ID="$AGENT_ID" "$@"
+}
+
+while :; do
+  client /opt/hermes/.venv/bin/python3 /opt/plow/agent-index-client.py status >/dev/null
+  case $? in
+    0) ;;
+    3)
+      # Read only during bootstrap; never source a credential or dotenv file.
+      PLOW_AGENT_TOKEN=$(cat /run/s6/container_environment/PLOW_AGENT_TOKEN 2>/dev/null || true)
+      PLOW_API_BASE=$(cat /run/s6/container_environment/PLOW_API_BASE 2>/dev/null || true)
+      client PLOW_AGENT_TOKEN="$PLOW_AGENT_TOKEN" PLOW_API_BASE="$PLOW_API_BASE" \
+        /opt/hermes/.venv/bin/python3 /opt/plow/agent-index-client.py \
+        --register --agent "$AGENT_ID" >/dev/null
+      result=$?
+      unset PLOW_AGENT_TOKEN PLOW_API_BASE
+      if [ "$result" -ne 0 ]; then
+        echo "agent-index: registration failed; not reporting this pass" >&2
+        /bin/sleep 300
+        continue
+      fi
+      ;;
+    *)
+      echo "agent-index: unreadable install state; no registration or reporting this pass" >&2
+      /bin/sleep 300
+      continue
+      ;;
+  esac
+  client /opt/hermes/.venv/bin/python3 /opt/plow/agent-index-client.py \
+    || echo "agent-index: reporting failed; retrying next pass" >&2
+  /bin/sleep 300
+done

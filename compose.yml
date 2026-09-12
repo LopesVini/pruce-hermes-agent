@@ -2,9 +2,12 @@ name: pruce
 services:
   agent:
     build: .
+    environment:
+      # Empty by default: no registration or reporting. Set only after approval.
+      AGENT_ID: "${AGENT_ID:-}"
     volumes:
       - type: bind
-        source: ../plow-hermes-agent/plow-credentials
+        source: ${PRUCE_CREDENTIALS_FILE:-../plow-hermes-agent/plow-credentials}
         target: /var/lib/plow/credentials.host
         read_only: true
         bind:

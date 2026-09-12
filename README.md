@@ -10,14 +10,16 @@ Conversa pela Plow, apresentação curta, contexto progressivo e pendências
 persistentes. Aceita uma tarefa antes de completar qualquer apresentação.
 Os estados são internos; a experiência é uma conversa, não um quadro de tickets.
 
-Não adiciona integrações, Agent Index, cron, proatividade, dashboard ou API.
+Agent Index está preparado, mas desabilitado por padrão (`AGENT_ID` vazio).
+Não adiciona cron de tarefas, proatividade, dashboard ou API própria.
 Não configura Google Workspace ou Latch; a rota dessas integrações fica para
 investigação posterior. As capacidades da base continuam herdadas, mas sua
 presença não comprova contas conectadas. Um prazo salvo não gera lembrete.
 
 ## Arquitetura
 
-- `Dockerfile`: base oficial fixada por digest, persona e duas skills.
+- `Dockerfile`: base oficial fixada por digest, persona, duas skills e client oficial
+  Agent Index fixado por commit/checksum; o build recusa conteúdo divergente.
 - `compose.yml`: um agente, credencial existente montada somente para leitura,
   volume exclusivo `pruce_agent-home`, sem portas publicadas.
 - `runtime/persona.md`: identidade, foco, privacidade e encaminhamento às skills.
@@ -39,7 +41,8 @@ Não substituímos o seed da Plow nem copiamos a identidade final para o volume.
 Como o variant oficial Life Assistant, distribuímos skills em
 `/opt/hermes/skills`; Hermes as reconcilia no home durante o boot. Skills que
 o agente personalizou ou excluiu podem não receber atualizações automáticas.
-Essa reconciliação ainda precisa ser observada no primeiro boot do Prucê.
+O núcleo já foi validado pelo responsável em execução local pela linha Plow,
+incluindo persistência, retomada após restart e distinção entre espera e conclusão.
 
 Estado no container: `/var/lib/hermes/pruce/state.json`:
 
@@ -59,59 +62,159 @@ atômica. Estado inválido é recusado, nunca apagado ou reinicializado. A ausê
 de estado é uma primeira instalação normal. O JSON contém informações pessoais:
 não deve ser incluído na imagem, Git ou respostas em grupos.
 
-## Testes locais, sem container
+## Requisitos e instalações independentes
 
-A partir deste repositório:
+Docker com Compose v2/BuildKit e acesso às imagens oficiais e ao GitHub no build.
+Para conversar, cada instalador precisa de conta/linha Plow e credencial própria,
+provisionada pela CLI oficial `plow-agents`. Nunca distribua a credencial do autor.
+Google Workspace e Latch não são requisitos deste MVP.
+
+O Compose preserva o caminho da instalação atual por padrão:
+`../plow-hermes-agent/plow-credentials`. Para outra instalação, configure
+`PRUCE_CREDENTIALS_FILE` com o caminho absoluto do arquivo privado daquele
+instalador. O bind é somente leitura e não cria diretórios se o arquivo faltar.
+Nunca inclua o conteúdo desse arquivo em comandos, logs, Git ou imagens.
+
+Cada instalação independente usa seu próprio volume. O projeto Compose padrão
+é `pruce`; para duas instalações na mesma máquina, use nomes de projeto distintos
+com `docker compose -p <nome>` em TODOS os comandos. Recriações da mesma instalação
+reutilizam o mesmo nome/volume. Não clone volumes entre pessoas. Não apague volumes.
+Nunca execute dois gateways sobre a mesma linha ou sobre o mesmo home.
+
+## Agent Index: o que cada identificador significa
+
+| Item | Função |
+| --- | --- |
+| Credencial Plow | Segredo da instalação. O client a usa no bootstrap para obter uma assertion da Plow; não a envia como bearer de métricas ao Index. |
+| `AGENT_ID` | Identificador público do produto, futuramente `pruce`. Vazio por padrão: nenhuma chamada de registro ou reporting. |
+| `install_id` | Aleatório, gerado exclusivamente pelo client oficial. Identifica uma instalação persistente, não o produto nem uma conversa. |
+| Chave `aik_…` | Segredo emitido pelo Index, usado para os relatórios posteriores. |
+
+`$HERMES_HOME/.agent-index.json` guarda install_id e chave juntos. O ledger de
+contagem fica em `$HERMES_HOME/.agent-index-state.json`, ao lado do `state.db`.
+Tudo permanece no volume existente `/var/lib/hermes`. Não edite, copie ou apague
+esses arquivos para aumentar contagens. Não registramos o produto a partir de um
+home temporário que seria descartado depois.
+
+O serviço s6 `agent-index` depende de `plow-init`. Sem `AGENT_ID`, aguarda sem
+invocar o client. Quando autorizado e configurado, consulta `status`: 0 reporta;
+3 registra a instalação pelo client; 2 ou outro erro não registra nem reporta.
+Após cada ciclo espera 300 segundos. Registro automático não passa metadados da
+página. A revisão oficial corrigida aceita 409 como adesão de um instalador ao
+produto de outro autor, sem tomar sua página. Nenhum protocolo é reimplementado.
+
+O subprocesso recebe ambiente explícito: o token Plow só é passado ao bootstrap,
+com o endpoint publicado pela base; status e reporting não o herdam. O client e o
+supervisor ficam em caminhos da imagem pertencentes a root. O client roda como
+`hermes`, com HOME e HERMES_HOME apontando ao volume do agente.
+
+### Privacidade e limites
+
+O reporter lê contadores de `session_model_usage` no banco Hermes em modo somente
+leitura. Envia data, modelo e tokens de entrada, saída, leitura/escrita de cache,
+sem prompts, mensagens, títulos de pendências, documentos ou custos. O JSON de
+open loops não é uma fonte de métricas. Stories não são publicadas pelo serviço.
+A janela padrão é de 28 dias; contagens diárias são mantidas pelo client oficial,
+sem somar relatórios repetidos como novos gastos. A recuperação inicial de
+histórico que atravessa dias é limitada pelo formato dos contadores Hermes.
+
+Uso por dia/modelo revela padrões de atividade. Metadados da página são públicos,
+e a autoria vem da identidade Plow. Cada instalador deve entender e aceitar essa
+publicação antes de definir AGENT_ID. O registro é uma operação externa; uma
+execução normal do reporter também pode enviar o sinal de medição pendente.
+
+A identidade de instalação não é o indicador “Success installs” do site. Essa
+métrica é calculada pelo Index. Não emitimos beacons próprios nem inventamos um
+contador. Não instalamos agentsview nem montamos dados de outros agentes.
+
+## Testes isolados
+
+Teste o núcleo sem Docker:
 
 ```sh
-python3 -B -m unittest discover -s tests -v
-docker compose config --quiet
+python3 -B -m unittest discover -s tests -p test_state.py -v
+AGENT_ID= docker compose config --quiet
 ```
 
-Os testes usam diretórios temporários e não acessam credenciais nem o home do
-Hermes. A validação de Compose não inicia serviços. Esses testes não validam
-conversa com o modelo, entrega Plow, build da imagem ou boot.
-
-## Primeiro teste pela linha existente — ainda não executado
-
-Primeiro construa a imagem; este comando não assume a linha:
+Construa uma imagem de verificação. O build baixa somente dependências públicas;
+não inicia serviços nem acessa a credencial montada pelo Compose:
 
 ```sh
-docker compose build
+docker build --platform linux/amd64 -t pruce-index-check:local .
 ```
 
-**Só depois de autorizar a troca**, com a imagem construída, pare o gateway
-oficial e inicie o Prucê. Nunca mantenha ambos ativos com a mesma credencial:
+Execute os testes sobre o client REAL instalado, com dados/HTTP fictícios:
 
 ```sh
-docker stop plow-hermes-agent-agent-1
-docker compose up -d
+python3 -B tests/run_in_image.py
 ```
 
-O Compose referencia `../plow-hermes-agent/plow-credentials` sem copiar ou
-imprimir seu conteúdo. `create_host_path: false` faz um caminho ausente falhar
-em vez de criar uma pasta. Não faça mint. Não apague volumes. O estado do
-Hermes oficial permanece separado e preservado. O histórico remoto da Plow
-pode continuar disponível; volume novo não significa conversa remota vazia.
+O runner copia apenas uma lista explícita de arquivos de código para uma pasta
+temporária e a monta para testes. Não monta o checkout, credenciais ou volumes
+reais. Executa a suíte e o self-check oficial em containers descartáveis com
+`--network none`, root filesystem somente leitura e estado em tmpfs. O entrypoint
+é Python, não `/init`: nenhum gateway ou supervisor é iniciado. O self-check
+precisa de `/tmp:exec` para seu coletor fictício; a rede continua bloqueada.
 
-Se for necessário voltar ao Hermes oficial, pare o Prucê primeiro:
+A base fixada é linux/amd64. Em Mac ARM, essa validação usa a emulação do Docker.
+Para testar no host, `PRUCE_INDEX_CLIENT` pode apontar ao script público baixado
+em pasta temporária e validado pelo checksum. A suíte verifica o checksum ANTES
+de executar o client, sem download automático nem autenticação real:
 
 ```sh
-docker compose stop
-docker start plow-hermes-agent-agent-1
+PRUCE_INDEX_CLIENT=/caminho/temporario/agent_index_client.py \
+  python3 -B -m unittest discover -s tests -v
 ```
 
-No teste conversacional, use a linha já funcional e confira:
+`--dry-run` não envia métricas, mas pode escrever o ledger local e exige estado de
+chave. Use-o somente no ambiente sintético dos testes. NÃO combine `--register`
+com `--dry-run`: registro tem precedência e não seria uma simulação.
 
-1. Saudação: apresenta-se como Prucê, explica o propósito e faz uma pergunta curta.
-2. Tarefa como primeira mensagem: ajuda imediatamente, sem exigir perfil.
-3. Experimente prova de termodinâmica, aproveitamento de matéria, cancelamento
-   de assinatura e envio de CV. O mesmo fluxo deve atender a todos.
-4. Dê contexto em etapas: deve lembrar as respostas e pedir apenas o necessário.
-5. Peça retomada em outra sessão e após reiniciar somente o Prucê: deve recuperar
-   a pendência, sem duplicá-la. Reiniciar o container, sozinho, pode restaurar
-   a sessão anterior; teste uma sessão distinta também.
-6. Verifique que plano ou rascunho não vira conclusão de uma tarefa mais ampla.
-   Confirme um resultado realizado e peça uma atualização posterior.
+## Publicação e registro futuros — exigem autorização
 
-Não prometa notificações nem execução enquanto o container estiver parado.
+Nada nesta implementação registra o produto ou habilita reporting por padrão.
+A sequência futura é:
+
+1. Revisar e autorizar a publicação do repositório MIT e tutorial de instalação.
+2. Confirmar disponibilidade/autoria de `pruce`, descrição pública e links.
+3. Autorizar rebuild/recriação do Prucê com `AGENT_ID` vazio, preservando o volume,
+   para disponibilizar o client sem iniciar reporting. Não iniciar outro gateway.
+4. Autorizar o registro. Rodá-lo dentro dessa instalação, como usuário hermes,
+   usando o ambiente que a base já publicou. Não extrair credenciais para o host.
+   Exemplo para executar SOMENTE nessa etapa, com metadados revisados:
+
+```sh
+AGENT_ID= docker compose exec -T agent \
+  /command/with-contenv /command/s6-setuidgid hermes \
+  env HOME=/var/lib/hermes HERMES_HOME=/var/lib/hermes \
+  /opt/hermes/.venv/bin/python3 /opt/plow/agent-index-client.py \
+  --register --agent pruce --name "Prucê" \
+  --blurb "Ajuda estudantes e jovens adultos a avançar pendências até um resultado claro." \
+  --runtime "Hermes / Plow" \
+  --repo "<URL pública aprovada>" --install-url "<URL HTTPS do tutorial>"
+```
+
+5. Conferir que a página pertence ao autor correto. Um 409 agora permite adesão
+   como instalador; portanto, exit 0 sozinho NÃO comprova autoria de `pruce`.
+6. Autorizar reporting e a atualização do container: definir `AGENT_ID=pruce`
+   no ambiente do Compose e recriar o serviço com a mesma imagem/volume. Esta
+   configuração deve ser mantida nas operações futuras. A partir daí, instalações
+   novas registram sua própria identidade automaticamente e reportam a cada ciclo.
+7. Conferir métricas reais e uma instalação independente, com credenciais próprias.
+8. Autorizar e solicitar Verified pelo canal oficial disponível. Reporter não
+   concede Verified: a equipe precisa avaliar/instalar/executar o produto.
+
+Desabilitar reporting futuramente exige recriar o serviço com AGENT_ID vazio,
+preservando o volume; isso não remove informações já publicadas no Index.
+O registro, reporting real, publicação e solicitação de Verified NÃO foram
+executados nesta etapa.
+
+## Licença e referências
+
+Código original do Prucê: MIT, em `LICENSE`. Client oficial e supervisor adaptado:
+Apache-2.0; atribuições em `NOTICE` e texto em `LICENSES/Apache-2.0.txt`.
+Isso não relicencia os componentes da imagem base.
+
+- [Client oficial fixado](https://github.com/plow-pbc/agent-index-client/tree/87901f8b182a8a7c65ee3dd7267f8f835ee2a545)
+- [Exemplo oficial Life Assistant](https://github.com/plow-pbc/life-assistant-hermes-agent)
+- [Agent Index e informações de Verified](https://aiworthusing.com/agent-index)
