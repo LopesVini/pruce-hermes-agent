@@ -122,6 +122,27 @@ class StateTests(unittest.TestCase):
         self.assertEqual(state.read(self.path)["tasks"], [fixed])
         self.assertEqual(fixed["id"], task["id"])
 
+    def test_active_excludes_completed_with_legacy_wait_without_changing_history(self):
+        self.create("Mandar currículo para vaga de estágio")
+        legacy = state.read(self.path)
+        closed = legacy["tasks"][0]
+        closed.update({
+            "status": "completed", "next_step": "Nenhuma ação pendente; aguardando retorno da empresa",
+            "evidence": {"kind": "user_confirmation", "detail": "Usuário confirmou que enviou o currículo."},
+        })
+        active_statuses = sorted(state.STATUSES - {"completed"})
+        for status in active_statuses:
+            legacy["tasks"].append({**closed, "id": status, "title": f"Pendência {status}", "status": status})
+        self.path.write_text(json.dumps(legacy))
+        before = self.path.read_bytes()
+        output = subprocess.check_output([
+            sys.executable, str(SCRIPT), "active", "--state", str(self.path)], input=b"")
+        active = json.loads(output)["result"]
+        self.assertEqual([task["status"] for task in active["tasks"]], active_statuses)
+        self.assertNotIn(closed["id"], [task["id"] for task in active["tasks"]])
+        self.assertEqual(state.run(self.path, "read"), legacy)
+        self.assertEqual(self.path.read_bytes(), before)
+
     def test_invalid_mutations_preserve_existing_state(self):
         task = self.create()
         before = self.path.read_bytes()

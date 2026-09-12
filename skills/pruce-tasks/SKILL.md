@@ -5,10 +5,11 @@ description: Capture, resume and advance a student's or young adult's unfinished
 
 # One open loop, one useful next step
 
-Use only in a solo DM from the owner. Read the state before task work:
+Use only in a solo DM from the owner. Read context and active open loops before
+listing, summarizing or resuming current responsibilities:
 
 ```sh
-python3 /var/lib/hermes/skills/pruce-tasks/scripts/state.py read
+python3 /var/lib/hermes/skills/pruce-tasks/scripts/state.py active
 ```
 
 1. Read the request and saved state. Match an existing task by meaning, not
@@ -67,16 +68,19 @@ On closure set `next_step` to exactly `Nenhuma ação pendente.`. This internal
 convention prevents a completed record from retaining an external wait; the
 writer rejects other next_step text for completed records. Never replace an
 actual wait with that phrase just to pass validation: save waiting status.
-When resuming an older record marked completed with a remaining external wait,
-use the conversation/evidence to correct that same ID, including its title
-when it names only the finished step. Do not duplicate it or silently discard
-the wait. Existing records remain readable; the check applies to task writes.
+For existing records, status is authoritative: `completed` always means closed,
+even if legacy next_step text says "aguardando". Never present it as a current
+pending responsibility or reopen it based on that text. `active` excludes every
+completed record and is the source for current open-loop lists and summaries.
+Use `read` only when historical records are needed, such as an explicit request
+to review or reopen a closed subject; closed records remain history until the
+user requests reopening. Both reads preserve the stored state unchanged.
 
 An exam-preparation task stays open after drafting a plan. An application
 stays open after sending the CV if a response is awaited. If the request was only to write a draft,
 producing and verifying that draft can complete that narrower task. Never
-silently shrink the agreed outcome to make it look completed. If an error is
-discovered, reopen the same task and explain the correction.
+silently shrink the agreed outcome to make it look completed. If the user asks
+to reopen a closed subject, update the same ID and explain the correction.
 
 ## Small state interface
 

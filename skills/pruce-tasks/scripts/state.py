@@ -147,8 +147,11 @@ def write(path, state):
 
 def run(path, command, data=None):
     path = Path(path)
-    if command == "read":
-        return read(path)  # Atomic replacement makes reads safe without creating files.
+    if command in {"read", "active"}:
+        state = read(path)  # Read-only: keep closed records intact on disk.
+        if command == "active":
+            state["tasks"] = [task for task in state["tasks"] if task["status"] != "completed"]
+        return state
     require(command in {"profile", "create", "update"}, "unknown command")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Lock a separate inode: the state itself is replaced on each write.
@@ -163,12 +166,12 @@ def run(path, command, data=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("read", "profile", "create", "update"))
+    parser.add_argument("command", choices=("read", "active", "profile", "create", "update"))
     parser.add_argument("--state", type=Path, default=DEFAULT_PATH,
                         help="override the state file for isolated local tests")
     args = parser.parse_args()
     try:
-        data = None if args.command == "read" else parse(sys.stdin.read())
+        data = None if args.command in {"read", "active"} else parse(sys.stdin.read())
         result = run(args.state, args.command, data)
     except (ValueError, OSError, TypeError) as error:
         # Never echo raw state, user text, command input or credentials on failure.
