@@ -8,6 +8,10 @@ o nome do produto é apenas **Prucê**, em qualquer idioma.
 
 Conversa pela Plow, apresentação curta, contexto progressivo e pendências
 persistentes. Aceita uma tarefa antes de completar qualquer apresentação.
+Um open loop representa um resultado ainda em aberto, como uma candidatura;
+enviar o currículo é apenas seu próximo passo. Ajuda a preparar planos de
+estudo, revisar texto de CV e redigir pedidos, usando as ferramentas disponíveis.
+Só confirma execução externa com evidência ou confirmação do usuário.
 Os estados são internos; a experiência é uma conversa, não um quadro de tickets.
 
 Agent Index está preparado, mas desabilitado por padrão (`AGENT_ID` vazio).
@@ -69,11 +73,55 @@ Para conversar, cada instalador precisa de conta/linha Plow e credencial própri
 provisionada pela CLI oficial `plow-agents`. Nunca distribua a credencial do autor.
 Google Workspace e Latch não são requisitos deste MVP.
 
-O Compose preserva o caminho da instalação atual por padrão:
-`../plow-hermes-agent/plow-credentials`. Para outra instalação, configure
-`PRUCE_CREDENTIALS_FILE` com o caminho absoluto do arquivo privado daquele
-instalador. O bind é somente leitura e não cria diretórios se o arquivo faltar.
-Nunca inclua o conteúdo desse arquivo em comandos, logs, Git ou imagens.
+### Primeira instalação (macOS/Linux ou WSL2)
+
+Requer também Git e Python 3. Clone este repositório pelo botão **Code** do
+GitHub e abra um terminal na pasta `pruce-hermes-agent`. Em Mac ARM, habilite
+no Docker a execução/emulação de imagens linux/amd64, arquitetura da base.
+
+Instale a CLI oficial em uma pasta temporária de ferramentas e autentique sua
+própria conta (os comandos abaixo são para o instalador executar):
+
+```sh
+pruce_cli_dir="$(mktemp -d)"
+git clone https://github.com/plow-pbc/plow-agents.git "$pruce_cli_dir/plow-agents"
+export PATH="$pruce_cli_dir/plow-agents/bin:$PATH"
+plow-agents login
+plow-agents lines
+```
+
+Siga a ativação indicada pela CLI usando seu telefone. Se precisar criar uma
+linha, execute `plow-agents login --new-line` e depois `plow-agents lines`.
+Escolha uma linha sua com status `free`; substitua `ln_xxx` abaixo pelo ID dela.
+Na raiz deste repositório, gere sua credencial e configure o Compose:
+
+```sh
+plow-agents mint ln_xxx
+chmod 600 plow-credentials
+```
+
+Crie um arquivo `.env` com estas duas linhas (não contém o token):
+
+```dotenv
+PRUCE_CREDENTIALS_FILE=./plow-credentials
+AGENT_ID=
+```
+
+`.env` e `plow-credentials` são ignorados pelo Git e excluídos do build.
+Sem esse ajuste, o Compose mantém o caminho legado
+`../plow-hermes-agent/plow-credentials`; a instalação acima não depende dele.
+O bind é somente leitura e falha se o arquivo não existir.
+
+```sh
+docker compose build
+docker compose up -d
+```
+
+Envie uma mensagem à linha escolhida pelo iMessage/Plow Chat, por exemplo:
+“Tenho prova sábado e ainda não comecei”. O primeiro boot pode levar alguns
+minutos. Para reiniciar depois, use `docker compose restart agent` na mesma
+pasta. O volume preserva contexto, pendências e identidade da instalação.
+Não compartilhe credenciais, dumps do volume ou logs sem revisão.
 
 Cada instalação independente usa seu próprio volume. O projeto Compose padrão
 é `pruce`; para duas instalações na mesma máquina, use nomes de projeto distintos
@@ -109,6 +157,10 @@ supervisor ficam em caminhos da imagem pertencentes a root. O client roda como
 `hermes`, com HOME e HERMES_HOME apontando ao volume do agente.
 
 ### Privacidade e limites
+
+As conversas passam pela Plow e pelo provedor de modelo da stack; não são um
+processamento exclusivamente local. Contexto e pendências ficam no volume local.
+A proteção e retenção nos serviços externos seguem as políticas desses serviços.
 
 O reporter lê contadores de `session_model_usage` no banco Hermes em modo somente
 leitura. Envia data, modelo e tokens de entrada, saída, leitura/escrita de cache,
