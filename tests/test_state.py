@@ -336,6 +336,35 @@ class StateTests(unittest.TestCase):
         self.assertNotIn("temporal", history)
         self.assertEqual(self.path.read_text(), json.dumps(saved))
 
+    def test_canonical_view_overrides_stale_memory_about_open_and_temporal_state(self):
+        completed = self.create("Aproveitamento de disciplina")
+        state.run(self.path, "update", {
+            "id": completed["id"], "status": "completed",
+            "next_step": "Nenhuma ação pendente.",
+            "evidence": {"kind": "user_confirmation", "detail": "Resultado final confirmado."},
+        })
+        form = self.create("Enviar formulário")
+        saved = state.read(self.path)
+        target = next(task for task in saved["tasks"] if task["id"] == form["id"])
+        target.update({
+            "due": "amanhã à noite",
+            "temporal": {
+                "raw": "amanhã à noite", "captured_at": "2026-09-13T17:50:00-03:00",
+                "capture_basis": "message_timestamp", "timezone": "America/Sao_Paulo",
+                "kind": "day_part", "value": {"date": "2026-09-14", "part": "night"},
+                "reason": None, "source": "user_message", "evidence": None,
+            },
+        })
+        self.path.write_text(json.dumps(saved))
+
+        active = state.run(self.path, "active")["tasks"]
+        self.assertNotIn(completed["id"], {task["id"] for task in active})
+        operational = next(task for task in active if task["id"] == form["id"])
+        self.assertEqual(operational["effective_temporal"]["kind"], "unresolved")
+        self.assertEqual(operational["effective_temporal"]["reason"],
+                         "legacy_unverifiable_anchor_provenance")
+        self.assertEqual(operational["raw_temporal"]["kind"], "day_part")
+
     def test_valid_provenance_is_resolved_in_every_operational_read(self):
         temporal = self.normalize("amanhã")
         task = state.run(self.path, "create", {

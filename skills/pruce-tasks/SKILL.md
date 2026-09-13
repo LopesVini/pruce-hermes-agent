@@ -1,6 +1,6 @@
 ---
 name: pruce-tasks
-description: Capture, resume and advance a student's or young adult's unfinished responsibility in the owner's solo DM. Use for study, applications, paperwork and everyday open loops, and when checking known context. One workflow across domains, with persistent internal state.
+description: Check current task status, completion, active loops, waits, deadline or temporal reliability in the owner's solo DM. Also capture, resume and advance study, applications, paperwork and everyday open loops. Pure historical recall alone does not require a state read.
 ---
 
 # One open loop, one useful next step
@@ -101,9 +101,13 @@ Do not reset corrupt state or fabricate missing records.
 task exposes historical storage as `raw_due` and `raw_temporal`, and the current
 authority as `effective_temporal`. Never decide that a deadline is trustworthy
 from the shape or presence of raw fields. Use only `effective_temporal` for
-current claims, triage and execution. If asked whether a deadline is reliable,
-call one of these views in that turn; conversation memory is not a validity
-check. The internal JSON file remains unchanged and must not be read directly.
+current claims, triage and execution. If the answer depends on whether a task is
+open or completed, its current status, next step, wait, deadline, temporal
+reliability, past/future relation or time remaining, call the relevant
+operational view in that turn. A previous assistant answer and conversation
+memory are not evidence of current state. Pure recall of what the owner once
+mentioned does not require this read unless the answer also makes a current
+claim. The internal JSON file remains unchanged and must not be read directly.
 
 Commands `profile`, `create`, `update` take one JSON object from stdin. Send
 JSON as data, never interpolate user text into shell code. If using a quoted

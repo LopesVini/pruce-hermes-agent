@@ -16,6 +16,25 @@ def normalized(value):
     return " ".join(value.split()).casefold()
 
 
+def frontmatter_description(skill):
+    frontmatter = skill.split("---", 2)[1]
+    return normalized(next(
+        line.split(":", 1)[1] for line in frontmatter.splitlines()
+        if line.startswith("description:")
+    ))
+
+
+def state_authority_contract(persona):
+    section = persona.split("## State-sensitive questions", 1)[1].split("## ", 1)[0]
+    rows = {}
+    for line in section.splitlines():
+        if not line.startswith("|") or "---" in line or "Canonical authority" in line:
+            continue
+        subject, authority = (normalized(cell) for cell in line.strip("|").split("|"))
+        rows[subject] = authority
+    return rows, normalized(section)
+
+
 class ProductBehaviorTests(unittest.TestCase):
     def test_triage_is_bundled_in_the_variant(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
@@ -82,9 +101,48 @@ class ProductBehaviorTests(unittest.TestCase):
         persona = normalized(PERSONA)
         self.assertIn("raw_due` and `raw_temporal", tasks)
         self.assertIn("current authority as `effective_temporal", tasks)
-        self.assertIn("conversation memory is not a validity check", tasks)
+        self.assertIn("conversation memory are not evidence of current state", tasks)
         self.assertIn("use only `effective_temporal", triage)
-        self.assertIn("state engine's `effective_temporal` in that turn", persona)
+        self.assertIn("consult the state engine in that turn", persona)
+        self.assertIn("use its `effective_temporal`", persona)
+
+    def test_state_sensitive_questions_use_scoped_current_authorities(self):
+        rows, section = state_authority_contract(PERSONA)
+        task_authority = next(value for key, value in rows.items()
+                              if "task is open or completed" in key)
+        source_authority = next(value for key, value in rows.items()
+                                if "saved source map" in key)
+        availability_authority = next(value for key, value in rows.items()
+                                      if "usable now" in key)
+        external_authority = next(value for key, value in rows.items()
+                                  if "external system" in key)
+
+        self.assertTrue(all(command in task_authority
+                            for command in ("`pruce-tasks`", "`read`", "`active`", "`time-status`")))
+        self.assertIn("current `pruce-sources` output", source_authority)
+        self.assertIn("successful live tool check in this turn", availability_authority)
+        self.assertIn("fresh read from that authoritative source or tool", external_authority)
+        self.assertIn("not a read-before-every-reply rule", section)
+        self.assertIn("pure historical recall", section)
+
+    def test_skill_routing_descriptions_surface_current_state_checks(self):
+        task_description = frontmatter_description(TASKS)
+        source_description = frontmatter_description(SOURCES)
+        for concept in ("current task status", "completion", "active loops",
+                        "deadline", "temporal reliability"):
+            self.assertIn(concept, task_description)
+        self.assertIn("pure historical recall alone does not require", task_description)
+        self.assertIn("current source map", source_description)
+        self.assertIn("current live availability still requires a live tool check",
+                      source_description)
+
+    def test_prior_assistant_answer_is_not_current_state_evidence(self):
+        _, section = state_authority_contract(PERSONA)
+        tasks = normalized(TASKS)
+        self.assertIn("an earlier answer from prucê is never evidence", section)
+        self.assertIn("if it conflicts with canonical current state", section)
+        self.assertIn("a previous assistant answer", tasks)
+        self.assertIn("are not evidence of current state", tasks)
 
     def test_life_scan_is_on_demand_and_source_honest(self):
         self.assertIn("Known-context scan", TRIAGE)

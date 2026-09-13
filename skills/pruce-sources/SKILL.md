@@ -1,6 +1,6 @@
 ---
 name: pruce-sources
-description: Learn and maintain the owner's small source and coverage map: where each part of life is organized, whether Prucê can consult it directly or only through manual updates, when it was last observed, and whether a contextual access offer was declined. Use when a source is mentioned, shared, connected, unavailable, or relevant to a Life Scan. Not a connector and not a profile questionnaire.
+description: Check or maintain the owner's current source map and known configuration: where life is organized, manual or configured access, last observation, and declined offers. Use when a source is mentioned or coverage matters. Current live availability still requires a live tool check. Not a connector or questionnaire.
 ---
 
 # Work with the life the owner already has
@@ -14,6 +14,11 @@ Read it when source coverage affects the answer:
 ```sh
 python3 /var/lib/hermes/skills/pruce-sources/scripts/sources.py read
 ```
+
+For a question about the saved map or known configuration, use this current
+read rather than conversational memory. For a question about whether access
+works now, the map only identifies what to verify; a successful live tool check
+in that turn is authoritative.
 
 ## Learn progressively
 
