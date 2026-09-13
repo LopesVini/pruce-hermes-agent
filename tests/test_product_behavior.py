@@ -45,11 +45,19 @@ class ProductBehaviorTests(unittest.TestCase):
         self.assertIn("ask one focused question", TRIAGE)
 
     def test_life_scan_is_on_demand_and_source_honest(self):
-        self.assertIn("start with active Prucê open loops", TRIAGE)
-        self.assertIn("only sources that are available", TRIAGE)
+        self.assertIn("Known-context scan", TRIAGE)
+        self.assertIn("Connected-source scan", TRIAGE)
+        self.assertIn("only when its tools are actually connected", TRIAGE)
         self.assertIn("State exactly what the scan covered", TRIAGE)
         self.assertIn("This is an on-demand scan", TRIAGE)
         self.assertIn("do not promise continuous monitoring", normalized(TRIAGE))
+
+    def test_context_only_scan_discloses_coverage_once_and_offers_one_source(self):
+        triage = normalized(TRIAGE)
+        self.assertIn("if only known context was available", triage)
+        self.assertIn("this is not a complete scan yet", triage)
+        self.assertIn("offer at most one relevant integration", triage)
+        self.assertIn("not in unrelated conversations", triage)
 
     def test_permissions_are_contextual_and_do_not_expand_authority(self):
         self.assertIn("Offer access only when it unlocks an immediate", TRIAGE)
