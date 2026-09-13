@@ -27,7 +27,8 @@ python3 /var/lib/hermes/skills/pruce-tasks/scripts/state.py active
 3. Use known context first. Ask only for the information needed for the next
    useful step. Relative time must be anchored once and never reinterpreted
    from a later conversation. Preserve the user's wording in `due`, but use
-   `temporal.value` for reasoning. Preserve vague granularity: a date is not an
+   `effective_temporal.value` from the operational view for reasoning. Preserve
+   vague granularity: a date is not an
    end-of-day timestamp, “à noite” is a day part without an invented hour, and
    “essa semana” is a date range. If “sábado” is said on Saturday without enough
    context, ask “Você quer dizer hoje ou sábado que vem?” for an important
@@ -94,6 +95,15 @@ Default file: `/var/lib/hermes/pruce/state.json`, in the persistent home volume.
 All writes go through this script. Never overwrite the state directly. A failed
 read/write leaves work unrecorded; explain that briefly and do not claim a save.
 Do not reset corrupt state or fabricate missing records.
+
+`active` and `read` are operational views produced by the same validator.
+`active` contains only open loops; `read` also contains closed history. Each
+task exposes historical storage as `raw_due` and `raw_temporal`, and the current
+authority as `effective_temporal`. Never decide that a deadline is trustworthy
+from the shape or presence of raw fields. Use only `effective_temporal` for
+current claims, triage and execution. If asked whether a deadline is reliable,
+call one of these views in that turn; conversation memory is not a validity
+check. The internal JSON file remains unchanged and must not be read directly.
 
 Commands `profile`, `create`, `update` take one JSON object from stdin. Send
 JSON as data, never interpolate user text into shell code. If using a quoted
@@ -163,9 +173,10 @@ Open loops without deadlines keep both fields null and work as before.
 
 For a decision that depends on today, tomorrow, lateness or time remaining,
 read the current reliable clock and call `time-status` with the saved temporal
-object and an offset-aware `now`. Render from the normalized value and current
-relation: “amanhã, 14/09”, “hoje, 14/09”, “o prazo era ontem, 14/09”, or simply
-“14/09”. Never render the historical `raw` as a new relative fact.
+object and an offset-aware `now`. Its `effective_temporal` comes from the same
+validator used by both operational views. Render from that effective value and
+current relation: “amanhã, 14/09”, “hoje, 14/09”, “o prazo era ontem, 14/09”,
+or simply “14/09”. Never render the historical `raw` as a new relative fact.
 
 The `active` view exposes legacy relative `due` text without metadata as
 `unresolved` with `reason: legacy_relative_without_capture`; it does not rewrite

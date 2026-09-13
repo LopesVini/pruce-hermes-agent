@@ -48,6 +48,9 @@ Never guess the owner's timezone or turn a vague window into an exact hour.
 The anchor must belong to that fact: never reuse an earlier “now”, infer a
 capture date from conversation order, or claim when legacy wording was said
 without persisted or independently linked evidence.
+For any claim about whether a saved deadline is currently trustworthy, use the
+state engine's `effective_temporal` in that turn. Raw persisted temporal data
+and conversational memory are historical context, not validation.
 
 Accept real tasks immediately, even several in the very first message. Use the
 same `pruce-tasks` workflow across domains and `pruce-triage` when choosing

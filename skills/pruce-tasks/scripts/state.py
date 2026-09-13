@@ -325,13 +325,45 @@ def temporal_identity(temporal):
     return temporal["kind"], temporal["value"], temporal["timezone"]
 
 
+def effective_temporal(raw_temporal, raw_due=None):
+    validate_temporal(raw_temporal)
+    if raw_temporal is None:
+        if isinstance(raw_due, str) and looks_relative(raw_due):
+            return temporal_record(raw_due, None, "unknown", None, "unresolved", None,
+                                   "legacy_relative_without_capture", "legacy", None)
+        return None
+    if raw_temporal["capture_basis"] in LEGACY_CAPTURE_BASES:
+        return temporal_record(
+            raw_temporal["raw"], None, "unknown", raw_temporal["timezone"],
+            "unresolved", None, "legacy_unverifiable_anchor_provenance",
+            raw_temporal["source"], raw_temporal["evidence"],
+        )
+    return copy.deepcopy(raw_temporal)
+
+
+def operational_task(task):
+    view = copy.deepcopy(task)
+    raw_due = view.pop("due")
+    raw_temporal = view.pop("temporal", None)
+    view["raw_due"] = raw_due
+    view["raw_temporal"] = raw_temporal
+    view["effective_temporal"] = effective_temporal(raw_temporal, raw_due)
+    return view
+
+
+def operational_state(state, active_only=False):
+    view = {"introduced": state["introduced"], "context": state["context"], "tasks": []}
+    for task in state["tasks"]:
+        if not active_only or task["status"] != "completed":
+            view["tasks"].append(operational_task(task))
+    return view
+
+
 def temporal_status(data):
     keys(data, {"temporal", "now"}, {"temporal", "now"})
-    temporal = data["temporal"]
-    validate_temporal(temporal)
-    if (temporal is None or temporal["kind"] == "unresolved"
-            or temporal["capture_basis"] in LEGACY_CAPTURE_BASES):
-        return {"relation": "unresolved"}
+    temporal = effective_temporal(data["temporal"])
+    if temporal is None or temporal["kind"] == "unresolved":
+        return {"relation": "unresolved", "effective_temporal": temporal}
     now = parse_aware_datetime(data["now"], "now").astimezone(timezone(temporal["timezone"]))
     kind, value = temporal["kind"], temporal["value"]
     if kind == "datetime":
@@ -343,25 +375,7 @@ def temporal_status(data):
     else:
         start, end = parse_date(value["start"], "range start"), parse_date(value["end"], "range end")
         relation = "future" if now.date() < start else "past" if now.date() > end else "current"
-    return {"relation": relation}
-
-
-def legacy_temporal(task):
-    due = task.get("due")
-    if task.get("temporal") is None and isinstance(due, str) and looks_relative(due):
-        return temporal_record(due, None, "unknown", None, "unresolved", None,
-                               "legacy_relative_without_capture", "legacy", None)
-    return None
-
-
-def unverified_provenance_temporal(task):
-    temporal = task.get("temporal")
-    if isinstance(temporal, dict) and temporal.get("capture_basis") in LEGACY_CAPTURE_BASES:
-        return temporal_record(
-            temporal["raw"], None, "unknown", temporal["timezone"], "unresolved", None,
-            "legacy_unverifiable_anchor_provenance", temporal["source"], temporal["evidence"],
-        )
-    return None
+    return {"relation": relation, "effective_temporal": temporal}
 
 
 def read(path):
@@ -461,14 +475,7 @@ def run(path, command, data=None):
         return temporal_status(data)
     if command in {"read", "active"}:
         state = read(path)  # Read-only: keep closed records intact on disk.
-        if command == "active":
-            state["tasks"] = [task for task in state["tasks"] if task["status"] != "completed"]
-            state = copy.deepcopy(state)
-            for task in state["tasks"]:
-                legacy = legacy_temporal(task) or unverified_provenance_temporal(task)
-                if legacy is not None:
-                    task["temporal"] = legacy
-        return state
+        return operational_state(state, active_only=command == "active")
     require(command in {"profile", "create", "update"}, "unknown command")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Lock a separate inode: the state itself is replaced on each write.

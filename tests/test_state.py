@@ -50,7 +50,9 @@ class StateTests(unittest.TestCase):
         output = subprocess.check_output([sys.executable, str(SCRIPT), "read", "--state", str(self.path)])
         saved = json.loads(output)["result"]
         self.assertTrue(saved["introduced"])
-        self.assertEqual(saved["tasks"][0], task)
+        self.assertEqual(saved["tasks"][0]["id"], task["id"])
+        self.assertIsNone(saved["tasks"][0]["effective_temporal"])
+        self.assertNotIn("temporal", saved["tasks"][0])
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
 
     def test_lifecycle_requires_fresh_evidence_and_reopens(self):
@@ -155,7 +157,7 @@ class StateTests(unittest.TestCase):
         active = json.loads(output)["result"]
         self.assertEqual([task["status"] for task in active["tasks"]], active_statuses)
         self.assertNotIn(closed["id"], [task["id"] for task in active["tasks"]])
-        self.assertEqual(state.run(self.path, "read"), legacy)
+        self.assertEqual(state.read(self.path), legacy)
         self.assertEqual(self.path.read_bytes(), before)
 
     def test_invalid_mutations_preserve_existing_state(self):
@@ -190,9 +192,11 @@ class StateTests(unittest.TestCase):
         temporal = self.normalize("vence amanhã")
         self.assertEqual(temporal["kind"], "date")
         self.assertEqual(temporal["value"], "2026-09-14")
-        self.assertEqual(state.temporal_status({
+        status = state.temporal_status({
             "temporal": temporal, "now": "2026-09-14T09:00:00-03:00",
-        }), {"relation": "today"})
+        })
+        self.assertEqual(status["relation"], "today")
+        self.assertEqual(status["effective_temporal"], temporal)
         self.assertEqual(temporal["value"], "2026-09-14")
 
     def test_live_capture_uses_new_clock_not_previous_clock_check(self):
@@ -259,10 +263,13 @@ class StateTests(unittest.TestCase):
         saved["tasks"][0]["due"] = "amanhã à noite"
         self.path.write_text(json.dumps(saved))
         active = state.run(self.path, "active")["tasks"][0]
-        self.assertEqual(active["temporal"]["kind"], "unresolved")
-        self.assertEqual(active["temporal"]["reason"], "legacy_relative_without_capture")
-        self.assertIsNone(active["temporal"]["captured_at"])
-        self.assertNotIn("temporal", state.run(self.path, "read")["tasks"][0])
+        self.assertEqual(active["effective_temporal"]["kind"], "unresolved")
+        self.assertEqual(active["effective_temporal"]["reason"],
+                         "legacy_relative_without_capture")
+        self.assertIsNone(active["effective_temporal"]["captured_at"])
+        operational = state.run(self.path, "read")["tasks"][0]
+        self.assertIsNone(operational["raw_temporal"])
+        self.assertEqual(operational["effective_temporal"], active["effective_temporal"])
         self.assertEqual(active["id"], task["id"])
 
     def test_legacy_real_message_timestamp_can_be_reconciled(self):
@@ -312,15 +319,33 @@ class StateTests(unittest.TestCase):
         self.path.write_text(json.dumps(saved))
         active = state.run(self.path, "active")["tasks"][0]
         self.assertEqual(active["id"], task["id"])
-        self.assertEqual(active["temporal"]["kind"], "unresolved")
-        self.assertEqual(active["temporal"]["reason"],
+        self.assertEqual(active["effective_temporal"]["kind"], "unresolved")
+        self.assertEqual(active["effective_temporal"]["reason"],
                          "legacy_unverifiable_anchor_provenance")
-        self.assertIsNone(active["temporal"]["captured_at"])
-        self.assertEqual(active["temporal"]["capture_basis"], "unknown")
-        self.assertEqual(state.temporal_status({
+        self.assertIsNone(active["effective_temporal"]["captured_at"])
+        self.assertEqual(active["effective_temporal"]["capture_basis"], "unknown")
+        status = state.temporal_status({
             "temporal": saved["tasks"][0]["temporal"],
             "now": "2026-09-14T10:00:00-03:00",
-        }), {"relation": "unresolved"})
+        })
+        self.assertEqual(status["relation"], "unresolved")
+        self.assertEqual(status["effective_temporal"], active["effective_temporal"])
+        history = state.run(self.path, "read")["tasks"][0]
+        self.assertEqual(history["raw_temporal"], saved["tasks"][0]["temporal"])
+        self.assertEqual(history["effective_temporal"], active["effective_temporal"])
+        self.assertNotIn("temporal", history)
+        self.assertEqual(self.path.read_text(), json.dumps(saved))
+
+    def test_valid_provenance_is_resolved_in_every_operational_read(self):
+        temporal = self.normalize("amanhã")
+        task = state.run(self.path, "create", {
+            "title": "Formulário", "next_step": "Preencher", "temporal": temporal,
+        })
+        for command in ("read", "active"):
+            view = state.run(self.path, command)["tasks"][0]
+            self.assertEqual(view["id"], task["id"])
+            self.assertEqual(view["raw_temporal"], temporal)
+            self.assertEqual(view["effective_temporal"], temporal)
 
     def test_new_relative_due_requires_temporal_metadata(self):
         with self.assertRaisesRegex(ValueError, "anchored temporal metadata"):
@@ -342,7 +367,8 @@ class StateTests(unittest.TestCase):
         relation = state.temporal_status({
             "temporal": temporal, "now": "2026-09-15T08:00:00-03:00",
         })
-        self.assertEqual(relation, {"relation": "past"})
+        self.assertEqual(relation["relation"], "past")
+        self.assertEqual(relation["effective_temporal"], temporal)
 
     def test_normalization_uses_selected_timezone(self):
         captured = "2026-09-14T01:00:00+00:00"

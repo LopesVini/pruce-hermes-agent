@@ -76,6 +76,16 @@ class ProductBehaviorTests(unittest.TestCase):
         self.assertIn("never say when a legacy phrase was “said” or “saved”", tasks)
         self.assertIn("the anchor must belong to that fact", persona)
 
+    def test_effective_temporal_is_the_only_operational_authority(self):
+        tasks = normalized(TASKS)
+        triage = normalized(TRIAGE)
+        persona = normalized(PERSONA)
+        self.assertIn("raw_due` and `raw_temporal", tasks)
+        self.assertIn("current authority as `effective_temporal", tasks)
+        self.assertIn("conversation memory is not a validity check", tasks)
+        self.assertIn("use only `effective_temporal", triage)
+        self.assertIn("state engine's `effective_temporal` in that turn", persona)
+
     def test_life_scan_is_on_demand_and_source_honest(self):
         self.assertIn("Known-context scan", TRIAGE)
         self.assertIn("Connected-source scan", TRIAGE)

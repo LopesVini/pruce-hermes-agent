@@ -29,7 +29,8 @@ the winner, but never ignore a hard cutoff. If one missing fact could reverse
 the recommendation, ask one focused question; otherwise decide and begin the
 first useful step.
 
-Use only normalized temporal values when a deadline affects the order. An
+Use only `effective_temporal` from the `pruce-tasks` operational view when a
+deadline affects the order. An
 `unresolved` deadline, including a legacy relative phrase without its original
 timestamp, is uncertainty rather than a confirmed urgent date. Say what is
 uncertain and reconcile an important deadline before making a strong ranking
