@@ -69,6 +69,42 @@ class SourceMapTests(unittest.TestCase):
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]["offer"], offer)
 
+    def test_source_identity_normalizes_unicode_case_and_whitespace(self):
+        area, source = "inscrições acadêmicas", "Caderno físico"
+        self.upsert(area, source, "manual")
+        sources.run(self.path, "upsert", {
+            "area": "  " + sources.unicodedata.normalize("NFD", area).upper() + "  ",
+            "source": sources.unicodedata.normalize("NFD", source).upper(),
+            "last_seen": "2026-09-13 — photo supplied in this chat",
+        })
+        saved = sources.run(self.path, "read")["sources"]
+        self.assertEqual(len(saved), 1)
+        self.assertIn("photo supplied", saved[0]["last_seen"])
+
+    def test_legacy_unicode_collision_is_readable_but_ambiguous_to_update(self):
+        decomposed = sources.unicodedata.normalize("NFD", "inscrições")
+        legacy = {"sources": [
+            {"area": "inscrições", "source": "Portal", "access": "manual",
+             "last_seen": None, "offer": None},
+            {"area": decomposed, "source": "Portal", "access": "unavailable",
+             "last_seen": None, "offer": None},
+        ]}
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(json.dumps(legacy))
+        self.assertEqual(sources.run(self.path, "read"), legacy)
+        with self.assertRaisesRegex(ValueError, "ambiguous source identity"):
+            sources.run(self.path, "upsert", {
+                "area": "INSCRIÇÕES", "source": "portal", "last_seen": "agora",
+            })
+        self.assertEqual(json.loads(self.path.read_text()), legacy)
+
+    def test_source_identity_preserves_meaningful_accent_differences(self):
+        self.upsert("family", "avó", "manual")
+        self.upsert("family", "avô", "manual")
+        self.upsert("applications", "inscricao", "manual")
+        self.upsert("applications", "inscrição", "manual")
+        self.assertEqual(len(sources.run(self.path, "read")["sources"]), 4)
+
     def test_map_grows_one_source_at_a_time(self):
         first = self.upsert("notes", "Obsidian", "unavailable")
         self.assertEqual(sources.run(self.path, "read")["sources"], [first])

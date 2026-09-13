@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import unicodedata
 
 
 ACCESS = {"connected", "manual", "unavailable"}
@@ -27,6 +28,10 @@ def keys(value, allowed, required=()):
     require(isinstance(value, dict), "expected a JSON object")
     require(not (value.keys() - allowed), "unknown fields")
     require(set(required) <= value.keys(), "missing required fields")
+
+
+def identity_text(value):
+    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
 def validate_entry(entry):
@@ -52,6 +57,9 @@ def validate(state):
     identities = set()
     for entry in state["sources"]:
         validate_entry(entry)
+        # Keep legacy maps with differently encoded Unicode identities readable.
+        # Stronger matching is applied to new upserts, where ambiguity can be
+        # refused without turning the whole persisted map into corrupt state.
         identity = (entry["area"].strip().casefold(), entry["source"].strip().casefold())
         require(identity not in identities, "duplicate source")
         identities.add(identity)
@@ -83,10 +91,11 @@ def read(path):
 def apply(state, data):
     allowed = {"area", "source", "access", "last_seen", "offer"}
     keys(data, allowed, {"area", "source"})
-    identity = (data["area"].strip().casefold(), data["source"].strip().casefold())
-    entry = next((item for item in state["sources"]
-                  if (item["area"].strip().casefold(), item["source"].strip().casefold())
-                  == identity), None)
+    identity = (identity_text(data["area"]), identity_text(data["source"]))
+    matches = [item for item in state["sources"]
+               if (identity_text(item["area"]), identity_text(item["source"])) == identity]
+    require(len(matches) <= 1, "ambiguous source identity; reconcile existing entries")
+    entry = matches[0] if matches else None
     if entry is None:
         require("access" in data, "new source requires access")
         entry = {"last_seen": None, "offer": None, **data}

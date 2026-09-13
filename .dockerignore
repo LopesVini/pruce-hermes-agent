@@ -15,6 +15,7 @@
 !skills/pruce-tasks/
 !skills/pruce-tasks/SKILL.md
 !skills/pruce-tasks/scripts/
+!skills/pruce-tasks/scripts/operations.py
 !skills/pruce-tasks/scripts/state.py
 !vendor/
 !vendor/client.pin

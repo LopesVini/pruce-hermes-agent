@@ -196,6 +196,11 @@ def folded(value):
                    if not unicodedata.combining(character))
 
 
+def identity_text(value):
+    """Conservative identity: normalize Unicode, case and repeated whitespace."""
+    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
 def looks_relative(value):
     value = folded(value)
     terms = ("hoje", "amanha", "ontem", "essa semana", "esta semana",
@@ -408,7 +413,7 @@ def apply(state, command, data):
         task = {"id": uuid.uuid4().hex[:12], "status": "needs_action", "due": None,
                 "evidence": None, "temporal": None, **data}
         validate_task(task)
-        require(not any(t["title"].strip().casefold() == task["title"].strip().casefold()
+        require(not any(identity_text(t["title"]) == identity_text(task["title"])
                         and t["status"] != "completed" for t in state["tasks"]),
                 "an open task has this title; read and update its id")
         state["tasks"].append(task)

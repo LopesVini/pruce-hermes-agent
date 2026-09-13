@@ -64,6 +64,8 @@ Prucê is a small variant of the official Plow Hermes image:
 - `runtime/persona.md` adds the product identity and behavioral rules;
 - `pruce-onboarding` learns context while helping;
 - `pruce-tasks` owns the small validated JSON open-loop record;
+- a separate operation ledger refuses blind replay inside its workflow after
+  success, interruption, or ambiguous results;
 - `pruce-sources` keeps a separate source and coverage map;
 - `pruce-triage` handles prioritization, life scans, progressive permissions,
   and capability discovery;
@@ -76,6 +78,24 @@ reconciles bundled skills into the persistent home. Open loops remain in
 `/var/lib/hermes/pruce/state.json`; source metadata lives separately in
 `/var/lib/hermes/pruce/sources.json`. There is no external database,
 task-manager framework, or Prucê API.
+
+Consequential actions use a small receipt in
+`/var/lib/hermes/pruce/operations.json`. Each receipt fixes one intent, action,
+target, payload hash, authorization and derived idempotency key before execution. A success,
+in-flight interruption or ambiguous result blocks another attempt until the
+actual service is reconciled; a confirmed safe failure can be retried under the
+same key. This guard does not turn local state into proof of an external effect
+and does not replace provider-side idempotency when available. It is not a
+gateway or tool-call interceptor: bypassing the workflow also bypasses this
+guard, so end-to-end enforcement remains an agent/runtime responsibility.
+
+Hermes snapshots the composed persona and skill guidance when a conversation
+session starts. After changing those files and rebuilding, use a fresh `/new`
+session for behavioral reliability tests; an already open conversation may
+continue following its older prompt snapshot. The named volume, open loops,
+source map and operation receipts survive `/new`. This repository does not add
+hot reload because the session boundary is explicit and persistent state is
+already separate from prompt state.
 
 Deadline wording such as “tomorrow night” remains available as history, while
 an optional temporal object anchors it to the capture instant and the owner's
@@ -205,7 +225,7 @@ tokens, or API keys to Prucê in chat.
 
 Open loops, context, and source metadata live in the installation's Docker
 volume. They may contain personal information, so do not publish the volume,
-`state.json`, `sources.json`, credential file, or unreviewed logs. The source
+`state.json`, `sources.json`, `operations.json`, credential file, or unreviewed logs. The source
 map stores coverage metadata, not document or message bodies. Conversations
 pass through Plow and the configured model provider; their retention and
 protection follow those services' policies.
@@ -227,7 +247,7 @@ s6 service does not invoke the client.
 Run the state, source-map, and prompt-contract tests locally:
 
 ```sh
-python3 -B -m unittest tests.test_state tests.test_sources tests.test_product_behavior -v
+python3 -B -m unittest tests.test_state tests.test_sources tests.test_operations tests.test_product_behavior -v
 AGENT_ID= docker compose config --quiet
 ```
 

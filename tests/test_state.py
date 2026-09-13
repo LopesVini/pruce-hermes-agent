@@ -181,6 +181,22 @@ class StateTests(unittest.TestCase):
             self.create("  ESTUDAR TERMODINÂMICA ")
         self.assertEqual(len(state.read(self.path)["tasks"]), 1)
 
+    def test_duplicate_identity_normalizes_unicode_case_and_whitespace(self):
+        title = "Inscrição   para estágio"
+        self.create(title)
+        with self.assertRaises(ValueError):
+            self.create("  " + state.unicodedata.normalize("NFD", title).upper() + " ")
+        self.assertEqual(len(state.read(self.path)["tasks"]), 1)
+
+    def test_conservative_identity_keeps_materially_different_titles(self):
+        self.create("Prova de Cálculo I")
+        self.create("Prova de Cálculo II")
+        self.create("Comprar presente para avó")
+        self.create("Comprar presente para avô")
+        self.create("Inscricao sem acentos")
+        self.create("Inscrição sem acentos")
+        self.assertEqual(len(state.read(self.path)["tasks"]), 6)
+
     def test_partial_update_preserves_other_fields(self):
         task = self.create()
         temporal = self.normalize("sábado", captured_at="2026-09-12T10:00:00-03:00")
