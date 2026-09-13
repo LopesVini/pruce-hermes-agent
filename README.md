@@ -28,6 +28,8 @@ Examples:
   stuck, and the owner's context;
 - on-demand life scans over saved open loops and any connected, authorized
   sources;
+- a progressively learned source map that respects paper, screenshots, local
+  files, and the apps the owner already uses;
 - contextual permission prompts and capability discovery;
 - practical help with study plans, CV text, applications, requests, forms, and
   other next steps using the tools that are actually available;
@@ -62,6 +64,7 @@ Prucê is a small variant of the official Plow Hermes image:
 - `runtime/persona.md` adds the product identity and behavioral rules;
 - `pruce-onboarding` learns context while helping;
 - `pruce-tasks` owns the small validated JSON open-loop record;
+- `pruce-sources` keeps a separate source and coverage map;
 - `pruce-triage` handles prioritization, life scans, progressive permissions,
   and capability discovery;
 - a named Docker volume persists Hermes memory and Prucê state;
@@ -69,9 +72,45 @@ Prucê is a small variant of the official Plow Hermes image:
   an s6 service when enabled.
 
 The base image composes its `SOUL.md` with Prucê's persona on every boot and
-reconciles bundled skills into the persistent home. The open-loop store remains
-one JSON file at `/var/lib/hermes/pruce/state.json`; there is no external
-database, task-manager framework, or Prucê API.
+reconciles bundled skills into the persistent home. Open loops remain in
+`/var/lib/hermes/pruce/state.json`; source metadata lives separately in
+`/var/lib/hermes/pruce/sources.json`. There is no external database,
+task-manager framework, or Prucê API.
+
+## Source-aware coverage
+
+Prucê does not assume that one app contains the owner's whole life. It learns
+one relevant fact at a time: Calendar may hold appointments, university dates
+may live in a paper notebook, applications in Gmail, and notes in Obsidian.
+
+The source map records only a functional area, the source name, access mode,
+the last grounded observation when useful, and the context of an accepted or
+declined permission offer:
+
+```json
+{
+  "sources": [
+    {
+      "area": "academic_planning",
+      "source": "paper notebook",
+      "access": "manual",
+      "last_seen": "2026-09-13 — notebook photo supplied in this chat",
+      "offer": null
+    }
+  ]
+}
+```
+
+`connected` means a route was verified, `manual` means the owner supplies a
+snapshot, and `unavailable` records a known coverage gap. A connected entry is
+still checked live before use. A manual observation is dated context, never a
+claim that the notebook or screenshot remains current forever.
+
+A Life Scan separates known context, sources successfully consulted in that
+turn, and manual or stale sources. Its confidence follows that coverage. Prucê
+can therefore say that no new deadline appeared in the sources it could see
+while also explaining that academic planning is less certain because the last
+notebook photo is old.
 
 ## Install
 
@@ -140,9 +179,10 @@ instructions available on that machine.
   Latch. The agent never creates or stores a local Google OAuth token.
 - Browser work uses Latch's browser tools on the owner's Mac. The container's
   unsupported browser toolset is deliberately disabled.
-- Files and other capabilities depend on the skills that the connected Latch
-  instance actually publishes. This release does not claim a dedicated Google
-  Drive connector.
+- Files, Notes, Reminders, Obsidian, and other capabilities depend on the
+  skills and paths that the connected Latch instance actually publishes. A
+  bundled catalog entry alone does not establish access. This release does not
+  claim a dedicated Google Drive connector.
 
 Prucê does not ask for these integrations during a generic welcome. It offers
 one only when it can explain the immediate result and initial access scope. A
@@ -156,11 +196,12 @@ tokens, or API keys to Prucê in chat.
 
 ## Privacy
 
-Open loops and context live in the installation's Docker volume. They may
-contain personal information, so do not publish the volume, `state.json`,
-credential file, or unreviewed logs. Conversations pass through Plow and the
-configured model provider; their retention and protection follow those
-services' policies.
+Open loops, context, and source metadata live in the installation's Docker
+volume. They may contain personal information, so do not publish the volume,
+`state.json`, `sources.json`, credential file, or unreviewed logs. The source
+map stores coverage metadata, not document or message bodies. Conversations
+pass through Plow and the configured model provider; their retention and
+protection follow those services' policies.
 
 Agent Index reporting is opt-in through `AGENT_ID`. The pinned official client
 reads Hermes' `session_model_usage` counters and sends day, model, input/output

@@ -8,6 +8,7 @@ PERSONA = (ROOT / "runtime/persona.md").read_text()
 ONBOARDING = (ROOT / "skills/pruce-onboarding/SKILL.md").read_text()
 TASKS = (ROOT / "skills/pruce-tasks/SKILL.md").read_text()
 TRIAGE = (ROOT / "skills/pruce-triage/SKILL.md").read_text()
+SOURCES = (ROOT / "skills/pruce-sources/SKILL.md").read_text()
 README = (ROOT / "README.md").read_text()
 
 
@@ -25,6 +26,13 @@ class ProductBehaviorTests(unittest.TestCase):
         if installed.exists():
             self.assertEqual(installed.read_bytes(),
                              (ROOT / "skills/pruce-triage/SKILL.md").read_bytes())
+
+    def test_source_map_is_bundled_separately_from_open_loops(self):
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        dockerignore = (ROOT / ".dockerignore").read_text()
+        self.assertIn("/opt/hermes/skills/pruce-sources", dockerfile)
+        self.assertIn("!skills/pruce-sources/scripts/sources.py", dockerignore)
+        self.assertIn("independent schema and lock", SOURCES)
 
     def test_onboarding_delivers_value_before_profile(self):
         self.assertIn("Value comes before profile", ONBOARDING)
@@ -58,6 +66,22 @@ class ProductBehaviorTests(unittest.TestCase):
         self.assertIn("this is not a complete scan yet", triage)
         self.assertIn("offer at most one relevant integration", triage)
         self.assertIn("not in unrelated conversations", triage)
+
+    def test_manual_sources_are_dated_context_not_permanent_coverage(self):
+        source_rules = normalized(SOURCES)
+        self.assertIn("never perpetual freshness", source_rules)
+        self.assertIn("manual observations become stale", source_rules)
+        self.assertIn("do not build custom ocr", source_rules)
+
+    def test_connected_map_entry_still_requires_a_live_tool(self):
+        source_rules = normalized(SOURCES)
+        self.assertIn("verify it before claiming a connected-source scan", source_rules)
+        self.assertIn("failed or unavailable tools do not refresh coverage", source_rules)
+
+    def test_declined_source_offer_is_not_repeated_for_same_context(self):
+        triage = normalized(TRIAGE)
+        self.assertIn("record that decision and its concrete outcome context", triage)
+        self.assertIn("do not repeat the same offer for the same context", triage)
 
     def test_permissions_are_contextual_and_do_not_expand_authority(self):
         self.assertIn("Offer access only when it unlocks an immediate", TRIAGE)

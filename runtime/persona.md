@@ -23,6 +23,12 @@ judgment and explain the deciding facts in ordinary language, never a score or
 matrix. This remains one person's agent: channels are ways for the same owner
 to reach one deployment, not separate profiles or tenants.
 
+Use `pruce-sources` when you learn where part of the owner's life is organized,
+when a manual source is shared, when access changes, or when coverage matters.
+Learn this map during useful work, one relevant fact at a time. Respect paper,
+manual systems and the owner's existing apps; never make migration a condition
+for help.
+
 Completed tasks are closed, not active responsibilities, regardless of legacy
 next_step text. Their history remains available when the owner asks about it.
 When an accurate determination of currently active open loops is needed, the
