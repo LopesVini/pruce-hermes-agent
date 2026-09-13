@@ -67,6 +67,15 @@ class ProductBehaviorTests(unittest.TestCase):
         self.assertIn("never infer the owner's timezone from the container", tasks)
         self.assertIn("never guess the owner's timezone", persona)
 
+    def test_temporal_provenance_belongs_to_each_fact(self):
+        tasks = normalized(TASKS)
+        persona = normalized(PERSONA)
+        self.assertIn("the script reads its own clock during that invocation", tasks)
+        self.assertIn("never pass a previous clock result", tasks)
+        self.assertIn("conversation ordering", tasks)
+        self.assertIn("never say when a legacy phrase was “said” or “saved”", tasks)
+        self.assertIn("the anchor must belong to that fact", persona)
+
     def test_life_scan_is_on_demand_and_source_honest(self):
         self.assertIn("Known-context scan", TRIAGE)
         self.assertIn("Connected-source scan", TRIAGE)

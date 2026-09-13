@@ -27,9 +27,17 @@ class StateTests(unittest.TestCase):
     def normalize(self, raw, captured_at="2026-09-13T17:00:00-03:00",
                   timezone="America/Sao_Paulo", **extra):
         return state.run(self.path, "normalize-time", {
-            "raw": raw, "captured_at": captured_at, "capture_basis": "message_timestamp",
+            "raw": raw, "captured_at": captured_at,
+            "capture_basis": "original_message_timestamp",
             "timezone": timezone, "source": "user", **extra,
         })
+
+    def normalize_live(self, raw, now, timezone="America/Sao_Paulo"):
+        with patch.object(state, "live_utc_now", return_value=state.datetime.fromisoformat(now)):
+            return state.run(self.path, "normalize-time", {
+                "raw": raw, "capture_basis": "live_runtime_clock_at_capture",
+                "timezone": timezone, "source": "user",
+            })
 
     def test_fresh_read_creates_nothing(self):
         self.assertEqual(state.run(self.path, "read"),
@@ -187,6 +195,24 @@ class StateTests(unittest.TestCase):
         }), {"relation": "today"})
         self.assertEqual(temporal["value"], "2026-09-14")
 
+    def test_live_capture_uses_new_clock_not_previous_clock_check(self):
+        previous = self.normalize("vence amanhã", "2026-09-13T17:00:00-03:00")
+        current = self.normalize_live("vence amanhã", "2026-09-14T02:30:00+00:00")
+        task = state.run(self.path, "create", {
+            "title": "Formulário", "next_step": "Preencher", "temporal": current,
+        })
+        self.assertEqual(previous["captured_at"], "2026-09-13T17:00:00-03:00")
+        self.assertEqual(task["temporal"]["captured_at"], "2026-09-13T23:30:00-03:00")
+        self.assertEqual(task["temporal"]["value"], "2026-09-14")
+
+    def test_live_capture_after_midnight_resolves_from_new_day(self):
+        before = self.normalize_live("vence amanhã", "2026-09-14T02:55:00+00:00")
+        after = self.normalize_live("vence amanhã", "2026-09-14T03:05:00+00:00")
+        self.assertEqual(before["captured_at"], "2026-09-13T23:55:00-03:00")
+        self.assertEqual(before["value"], "2026-09-14")
+        self.assertEqual(after["captured_at"], "2026-09-14T00:05:00-03:00")
+        self.assertEqual(after["value"], "2026-09-15")
+
     def test_tomorrow_at_time_becomes_absolute_datetime(self):
         temporal = self.normalize("amanhã às 18h")
         self.assertEqual(temporal["kind"], "datetime")
@@ -238,6 +264,63 @@ class StateTests(unittest.TestCase):
         self.assertIsNone(active["temporal"]["captured_at"])
         self.assertNotIn("temporal", state.run(self.path, "read")["tasks"][0])
         self.assertEqual(active["id"], task["id"])
+
+    def test_legacy_real_message_timestamp_can_be_reconciled(self):
+        task = self.create("Matrícula")
+        saved = state.read(self.path)
+        saved["tasks"][0].pop("temporal")
+        saved["tasks"][0]["due"] = "amanhã"
+        self.path.write_text(json.dumps(saved))
+        temporal = self.normalize("amanhã", "2026-09-12T21:00:00-03:00")
+        reconciled = state.run(self.path, "update", {"id": task["id"], "temporal": temporal})
+        self.assertEqual(reconciled["temporal"]["capture_basis"],
+                         "original_message_timestamp")
+        self.assertEqual(reconciled["temporal"]["value"], "2026-09-13")
+
+    def test_context_text_cannot_supply_temporal_provenance(self):
+        for basis in ("runtime_clock", "conversation_context", "previous_live_clock_check"):
+            with self.subTest(basis=basis), self.assertRaisesRegex(
+                    ValueError, "verifiable anchor provenance"):
+                state.run(self.path, "normalize-time", {
+                    "raw": "amanhã", "captured_at": "2026-09-13T17:00:00-03:00",
+                    "capture_basis": basis, "timezone": "America/Sao_Paulo",
+                    "source": "conversation_context",
+                })
+        legacy_claim = {
+            "raw": "amanhã", "captured_at": "2026-09-13T17:00:00-03:00",
+            "capture_basis": "message_timestamp", "timezone": "America/Sao_Paulo",
+            "kind": "date", "value": "2026-09-14", "reason": None,
+            "source": "conversation_context", "evidence": None,
+        }
+        with self.assertRaisesRegex(ValueError, "verifiable anchor provenance"):
+            state.run(self.path, "create", {
+                "title": "Formulário", "next_step": "Preencher", "temporal": legacy_claim,
+            })
+
+    def test_old_unverifiable_capture_basis_is_unresolved_in_active_view(self):
+        task = self.create("Formulário")
+        saved = state.read(self.path)
+        saved["tasks"][0].update({
+            "due": "amanhã à noite",
+            "temporal": {
+                "raw": "amanhã à noite", "captured_at": "2026-09-13T17:50:00-03:00",
+                "capture_basis": "message_timestamp", "timezone": "America/Sao_Paulo",
+                "kind": "day_part", "value": {"date": "2026-09-14", "part": "night"},
+                "reason": None, "source": "user_message", "evidence": None,
+            },
+        })
+        self.path.write_text(json.dumps(saved))
+        active = state.run(self.path, "active")["tasks"][0]
+        self.assertEqual(active["id"], task["id"])
+        self.assertEqual(active["temporal"]["kind"], "unresolved")
+        self.assertEqual(active["temporal"]["reason"],
+                         "legacy_unverifiable_anchor_provenance")
+        self.assertIsNone(active["temporal"]["captured_at"])
+        self.assertEqual(active["temporal"]["capture_basis"], "unknown")
+        self.assertEqual(state.temporal_status({
+            "temporal": saved["tasks"][0]["temporal"],
+            "now": "2026-09-14T10:00:00-03:00",
+        }), {"relation": "unresolved"})
 
     def test_new_relative_due_requires_temporal_metadata(self):
         with self.assertRaisesRegex(ValueError, "anchored temporal metadata"):

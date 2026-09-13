@@ -45,6 +45,9 @@ conversation. Anchor it through `pruce-tasks`, preserve its real granularity and
 reason only from the normalized value. When a deadline is ambiguous, keep the
 uncertainty and ask only when it affects the next action or prioritization.
 Never guess the owner's timezone or turn a vague window into an exact hour.
+The anchor must belong to that fact: never reuse an earlier “now”, infer a
+capture date from conversation order, or claim when legacy wording was said
+without persisted or independently linked evidence.
 
 Accept real tasks immediately, even several in the very first message. Use the
 same `pruce-tasks` workflow across domains and `pruce-triage` when choosing

@@ -1,7 +1,7 @@
 """Prucê's small local record. Standard library only; no network or scheduler."""
 import argparse
 import copy
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone as datetime_timezone
 import fcntl
 import json
 import os
@@ -22,7 +22,9 @@ EVIDENCE_STATES = {"completed", "waiting_for_third_party"}
 COMPLETED_NEXT_STEP = "Nenhuma ação pendente."
 DEFAULT_PATH = Path(os.environ.get("HERMES_HOME", "/var/lib/hermes")) / "pruce/state.json"
 TEMPORAL_KINDS = {"datetime", "date", "day_part", "date_range", "unresolved"}
-CAPTURE_BASES = {"message_timestamp", "runtime_clock", "unknown"}
+TRUSTED_CAPTURE_BASES = {"original_message_timestamp", "live_runtime_clock_at_capture"}
+LEGACY_CAPTURE_BASES = {"message_timestamp", "runtime_clock"}
+CAPTURE_BASES = TRUSTED_CAPTURE_BASES | LEGACY_CAPTURE_BASES | {"unknown"}
 DAY_PARTS = {"morning", "afternoon", "evening", "night"}
 WEEKDAYS = {
     "segunda": 0, "segunda-feira": 0, "terca": 1, "terca-feira": 1,
@@ -72,6 +74,11 @@ def timezone(value):
         return ZoneInfo(value)
     except (ZoneInfoNotFoundError, ValueError) as error:
         raise ValueError("invalid timezone") from error
+
+
+def live_utc_now():
+    """Read the clock inside normalization so a model cannot reuse an old now."""
+    return datetime.now(datetime_timezone.utc)
 
 
 def validate_evidence(evidence):
@@ -126,6 +133,15 @@ def validate_temporal(temporal):
             end = parse_date(value["end"], "range end")
             require(start <= end, "invalid temporal range")
     validate_evidence(temporal["evidence"])
+
+
+def validate_temporal_write(temporal):
+    validate_temporal(temporal)
+    if temporal is not None:
+        require(temporal["capture_basis"] in TRUSTED_CAPTURE_BASES
+                or (temporal["kind"] == "unresolved"
+                    and temporal["capture_basis"] == "unknown"),
+                "new temporal writes require verifiable anchor provenance")
 
 
 def validate_task(task):
@@ -201,18 +217,28 @@ def temporal_record(raw, captured_at, capture_basis, timezone_name, kind,
 
 def normalize_temporal(data):
     fields = {"raw", "captured_at", "capture_basis", "timezone", "source", "evidence"}
-    keys(data, fields, {"raw", "captured_at", "capture_basis", "timezone", "source"})
+    keys(data, fields, {"raw", "capture_basis", "timezone", "source"})
     raw = data["raw"]
     text(raw, "temporal raw", 300)
     source = data["source"]
     text(source, "temporal source", 100)
     evidence = data.get("evidence")
     validate_evidence(evidence)
-    captured_raw = data["captured_at"]
     capture_basis = data["capture_basis"]
-    require(capture_basis in CAPTURE_BASES - {"unknown"}, "normalization needs a capture basis")
-    captured = parse_aware_datetime(captured_raw, "captured_at")
     timezone_name = data["timezone"]
+    if capture_basis == "live_runtime_clock_at_capture":
+        require("captured_at" not in data,
+                "live runtime capture reads its own clock; do not supply captured_at")
+        captured = live_utc_now()
+        captured_raw = (captured.astimezone(timezone(timezone_name)).isoformat()
+                        if timezone_name is not None else captured.isoformat())
+    else:
+        require(capture_basis == "original_message_timestamp",
+                "normalization requires verifiable anchor provenance")
+        require("captured_at" in data,
+                "original message provenance requires captured_at from the event")
+        captured_raw = data["captured_at"]
+        captured = parse_aware_datetime(captured_raw, "captured_at")
     if timezone_name is None:
         return temporal_record(raw, captured_raw, capture_basis, None, "unresolved", None,
                                "timezone_unknown", source, evidence)
@@ -303,7 +329,8 @@ def temporal_status(data):
     keys(data, {"temporal", "now"}, {"temporal", "now"})
     temporal = data["temporal"]
     validate_temporal(temporal)
-    if temporal is None or temporal["kind"] == "unresolved":
+    if (temporal is None or temporal["kind"] == "unresolved"
+            or temporal["capture_basis"] in LEGACY_CAPTURE_BASES):
         return {"relation": "unresolved"}
     now = parse_aware_datetime(data["now"], "now").astimezone(timezone(temporal["timezone"]))
     kind, value = temporal["kind"], temporal["value"]
@@ -327,6 +354,16 @@ def legacy_temporal(task):
     return None
 
 
+def unverified_provenance_temporal(task):
+    temporal = task.get("temporal")
+    if isinstance(temporal, dict) and temporal.get("capture_basis") in LEGACY_CAPTURE_BASES:
+        return temporal_record(
+            temporal["raw"], None, "unknown", temporal["timezone"], "unresolved", None,
+            "legacy_unverifiable_anchor_provenance", temporal["source"], temporal["evidence"],
+        )
+    return None
+
+
 def read(path):
     try:
         state = parse(path.read_text(encoding="utf-8"))
@@ -347,6 +384,7 @@ def apply(state, command, data):
     elif command == "create":
         keys(data, {"title", "next_step", "status", "due", "temporal"}, {"title", "next_step"})
         if "temporal" in data and data["temporal"] is not None:
+            validate_temporal_write(data["temporal"])
             if "due" in data:
                 require(data["due"] == data["temporal"]["raw"],
                         "due must preserve temporal raw text")
@@ -367,7 +405,7 @@ def apply(state, command, data):
         task = next((t for t in state["tasks"] if t["id"] == data["id"]), None)
         require(task is not None, "unknown task id")
         if "temporal" in data and data["temporal"] is not None:
-            validate_temporal(data["temporal"])
+            validate_temporal_write(data["temporal"])
             if "due" in data:
                 require(data["due"] == data["temporal"]["raw"],
                         "due must preserve temporal raw text")
@@ -427,7 +465,7 @@ def run(path, command, data=None):
             state["tasks"] = [task for task in state["tasks"] if task["status"] != "completed"]
             state = copy.deepcopy(state)
             for task in state["tasks"]:
-                legacy = legacy_temporal(task)
+                legacy = legacy_temporal(task) or unverified_provenance_temporal(task)
                 if legacy is not None:
                     task["temporal"] = legacy
         return state

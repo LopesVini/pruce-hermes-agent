@@ -132,17 +132,24 @@ Normalize a deadline before saving it:
 
 ```sh
 python3 /var/lib/hermes/skills/pruce-tasks/scripts/state.py normalize-time <<'PRUCE_JSON'
-{"raw":"amanhã à noite","captured_at":"2026-09-13T17:00:00-03:00","capture_basis":"message_timestamp","timezone":"America/Sao_Paulo","source":"user"}
+{"raw":"amanhã à noite","capture_basis":"live_runtime_clock_at_capture","timezone":"America/Sao_Paulo","source":"user"}
 PRUCE_JSON
 ```
 
-Use the original message timestamp when the current event exposes it. In this
-stack, a normal Plow message may not expose that timestamp to Hermes. For a
-message known to be arriving live, read the live runtime clock at receipt and
-record `capture_basis: runtime_clock`. If delayed or backfilled delivery could
-change the date and the original timestamp is unavailable, keep `captured_at`
-null, `capture_basis: unknown`, and the temporal value unresolved; do not anchor
-it to processing time as if that were the sending time.
+For a message known to be arriving live, invoke normalization for that fact with
+`capture_basis: live_runtime_clock_at_capture` and omit `captured_at`. The script
+reads its own clock during that invocation; never pass a previous clock result
+or infer one from conversation order. Use `original_message_timestamp` with a
+supplied `captured_at` only when the current event or another trusted structure
+actually exposes that original timestamp. A normal Plow message in this pinned
+stack may not expose it to Hermes.
+
+If delayed or backfilled delivery could change the date and the original
+timestamp is unavailable, keep `captured_at` null, `capture_basis: unknown`, and
+the temporal value unresolved; do not anchor it to processing time as if that
+were the sending time. The legacy names `message_timestamp` and `runtime_clock`
+remain readable, but their provenance cannot be verified under the old
+interface: `active` and `time-status` treat them as unresolved until reconciled.
 Use an explicitly known owner/installation IANA timezone or a timezone returned
 by a live authorized device tool. Never infer the owner's timezone from the
 container clock, locale, phone number or language. If the timezone is unknown,
@@ -164,7 +171,12 @@ The `active` view exposes legacy relative `due` text without metadata as
 `unresolved` with `reason: legacy_relative_without_capture`; it does not rewrite
 the file. Reconcile only when that deadline becomes relevant. Do not normalize
 it using today's clock. Ask whether the loop is still pending and what the
-actual date was.
+actual date was. Never say when a legacy phrase was “said” or “saved” unless a
+timestamp explicitly persisted with that fact or a trusted historical message
+can be linked to it. Conversation ordering, remembered dates, file modification
+time and model inference are not temporal provenance. If a real historical
+message timestamp is found, normalize from it with
+`original_message_timestamp` and update the same task.
 
 When a connected source reports a changed deadline for the same open loop,
 compare source, recency and meaning. Do not silently replace a resolved value.
