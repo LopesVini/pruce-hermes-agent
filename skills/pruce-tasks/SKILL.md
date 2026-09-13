@@ -22,6 +22,8 @@ python3 /var/lib/hermes/skills/pruce-tasks/scripts/state.py active
    action or external response currently needed to advance it. Save promptly,
    even if details are missing; unknown
    deadlines stay null. Do not split one responsibility into a project tree.
+   When one message contains several independent outcomes, save each as its own
+   small open loop, then use `pruce-triage` to choose where to begin.
 3. Use known context first. Ask only for the information needed for the next
    useful step. Resolve ambiguous dates/timezones before scheduling anything
    or treating a date as exact. A literal user deadline such as "sábado" may

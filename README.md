@@ -1,272 +1,214 @@
 # Prucê
 
-Um agente Hermes para ajudar universitários e jovens adultos a tirar pendências
-da cabeça e executar o próximo passo. Student Life + Adulting é a categoria;
-o nome do produto é apenas **Prucê**, em qualquer idioma.
+**The personal agent for the things you need to deal with.**
 
-## Esta versão
+Prucê helps students and young adults move unfinished responsibilities from
+mental load to a clear outcome. It is built for **Student Life + Adulting**:
+exams, applications, forms, deadlines, subscriptions, refunds, documents, and
+all the small obligations that become expensive when ignored.
 
-Conversa pela Plow, apresentação curta, contexto progressivo e pendências
-persistentes. Aceita uma tarefa antes de completar qualquer apresentação.
-Um open loop representa um resultado ainda em aberto, como uma candidatura;
-enviar o currículo é apenas seu próximo passo. Ajuda a preparar planos de
-estudo, revisar texto de CV e redigir pedidos, usando as ferramentas disponíveis.
-Só confirma execução externa com evidência ou confirmação do usuário.
-Os estados são internos; a experiência é uma conversa, não um quadro de tickets.
+It is not a generic chatbot or a task-board interface. Prucê keeps an **open
+loop** for the outcome that still needs attention, identifies the next concrete
+step, helps execute it, waits when another person or organization owns the next
+move, and closes the loop only when the outcome is confirmed.
 
-Agent Index está preparado, mas desabilitado por padrão (`AGENT_ID` vazio).
-Não adiciona cron de tarefas, proatividade, dashboard ou API própria.
-Não configura Google Workspace ou Latch; a rota dessas integrações fica para
-investigação posterior. As capacidades da base continuam herdadas, mas sua
-presença não comprova contas conectadas. Um prazo salvo não gera lembrete.
+Examples:
 
-## Arquitetura
+- “I have an exam Saturday, an internship reply, and enrollment closes tomorrow.”
+- “I submitted my credit-transfer request. Now the university needs to answer.”
+- “Find out whether this trial is still active and help me cancel it.”
+- “What is the most important thing I should deal with today?”
+- “Am I missing anything?”
 
-- `Dockerfile`: base oficial fixada por digest, persona, duas skills e client oficial
-  Agent Index fixado por commit/checksum; o build recusa conteúdo divergente.
-- `compose.yml`: um agente, credencial existente montada somente para leitura,
-  volume exclusivo `pruce_agent-home`, sem portas publicadas.
-- `runtime/persona.md`: identidade, foco, privacidade e encaminhamento às skills.
-- `skills/pruce-onboarding/SKILL.md`: apresentação e contexto sem interrogatório.
-- `skills/pruce-tasks/SKILL.md`: captura, retomada e execução em todos os domínios.
-- `skills/pruce-tasks/scripts/state.py`: JSON validado; biblioteca padrão Python.
-- `tests/test_state.py`: testes isolados do estado e sua interface de linha de comando.
-- `.dockerignore`: lista restrita do que entra na imagem.
-- `.gitignore`: exclui credenciais, estado local e cache Python.
+## What works today
 
-Na implementação local de `plow-hermes-agent`, revisão
-`8710797b6409c77df560c6198407765d138ea617`, `main()` chama `harden_home()`,
-que chama `compose_identity()`. Esta lê `/opt/hermes/plow-seed/SOUL.md`,
-acrescenta `/opt/hermes/plow-seed/persona.md` e substitui atomicamente
-`/var/lib/hermes/SOUL.md` a cada boot. A identidade final fica root-owned.
-Nosso arquivo `runtime/persona.md` chega ao segundo caminho via Dockerfile.
-Não substituímos o seed da Plow nem copiamos a identidade final para o volume.
+- short, progressive onboarding with value before profile questions;
+- persistent open loops across conversations and restarts;
+- multi-loop triage using urgency, consequence, dependencies, effort, time
+  stuck, and the owner's context;
+- on-demand life scans over saved open loops and any connected, authorized
+  sources;
+- contextual permission prompts and capability discovery;
+- practical help with study plans, CV text, applications, requests, forms, and
+  other next steps using the tools that are actually available;
+- evidence-backed transitions between `needs_action`, `in_progress`,
+  `waiting_for_user`, `waiting_for_third_party`, and `completed`.
 
-Como o variant oficial Life Assistant, distribuímos skills em
-`/opt/hermes/skills`; Hermes as reconcilia no home durante o boot. Skills que
-o agente personalizou ou excluiu podem não receber atualizações automáticas.
-O núcleo já foi validado pelo responsável em execução local pela linha Plow,
-incluindo persistência, retomada após restart e distinção entre espera e conclusão.
+The status values are internal. The owner gets a natural conversation, not a
+Kanban board or a numerical priority score.
 
-Estado no container: `/var/lib/hermes/pruce/state.json`:
+Prucê currently runs on demand. It does not schedule reminders, scan in the
+background, or promise follow-up while the agent is idle. No Google, browser,
+or Latch account is bundled with the image. WhatsApp, a dashboard, and a
+multi-tenant service are outside the current release.
 
-```json
-{"introduced": false, "context": "", "tasks": []}
-```
+## One person, one deployment
 
-Uma pendência tem somente `id`, `title`, `status`, `next_step`, `due` e
-`evidence`. Estados: `needs_action`, `in_progress`, `waiting_for_user`,
-`waiting_for_third_party`, `completed`. Os dois últimos exigem evidência;
-uma mudança para eles exige evidência nova no comando. O script valida sua
-estrutura, mas a veracidade depende da conversa ou do resultado da ferramenta.
-Não há histórico de eventos, subtarefas, prioridades ou motor de execução.
+Each Prucê installation belongs to one person. It has its own Plow line,
+credential, persistent volume, memory, integrations, channels, and Agent Index
+installation identity. iMessage, Plow Chat, or a future channel are ways to
+reach that same installation; they are not separate user accounts.
 
-Escritas usam lock separado, arquivo temporário privado, fsync e substituição
-atômica. Estado inválido é recusado, nunca apagado ou reinicializado. A ausência
-de estado é uma primeira instalação normal. O JSON contém informações pessoais:
-não deve ser incluído na imagem, Git ou respostas em grupos.
+At boot, Plow identifies exactly one active home chat containing the line's
+owner and this agent. An ambiguous or missing home chat prevents the stack from
+starting instead of guessing. Prucê reads or changes personal state only in the
+owner's one-to-one chat. Sharing a line, credential, or home volume with another
+person breaks the privacy model and is unsupported.
 
-## Requisitos e instalações independentes
+## Architecture
 
-Docker com Compose v2/BuildKit e acesso às imagens oficiais e ao GitHub no build.
-Para conversar, cada instalador precisa de conta/linha Plow e credencial própria,
-provisionada pela CLI oficial `plow-agents`. Nunca distribua a credencial do autor.
-Google Workspace e Latch não são requisitos deste MVP.
+Prucê is a small variant of the official Plow Hermes image:
 
-### Primeira instalação (macOS/Linux ou WSL2)
+- `runtime/persona.md` adds the product identity and behavioral rules;
+- `pruce-onboarding` learns context while helping;
+- `pruce-tasks` owns the small validated JSON open-loop record;
+- `pruce-triage` handles prioritization, life scans, progressive permissions,
+  and capability discovery;
+- a named Docker volume persists Hermes memory and Prucê state;
+- the official Agent Index client is pinned by commit and checksum and runs as
+  an s6 service when enabled.
 
-Requer também Git e Python 3. Clone este repositório pelo botão **Code** do
-GitHub e abra um terminal na pasta `pruce-hermes-agent`. Em Mac ARM, habilite
-no Docker a execução/emulação de imagens linux/amd64, arquitetura da base.
+The base image composes its `SOUL.md` with Prucê's persona on every boot and
+reconciles bundled skills into the persistent home. The open-loop store remains
+one JSON file at `/var/lib/hermes/pruce/state.json`; there is no external
+database, task-manager framework, or Prucê API.
 
-Instale a CLI oficial em uma pasta temporária de ferramentas e autentique sua
-própria conta (os comandos abaixo são para o instalador executar):
+## Install
+
+Requirements: Docker with Compose v2, Git, Python 3, and a Plow account. The
+current base image is `linux/amd64`; Docker Desktop can emulate it on Apple
+Silicon.
+
+Clone Prucê and the official Plow CLI:
 
 ```sh
+git clone https://github.com/LopesVini/pruce-hermes-agent.git
+cd pruce-hermes-agent
+
 pruce_cli_dir="$(mktemp -d)"
 git clone https://github.com/plow-pbc/plow-agents.git "$pruce_cli_dir/plow-agents"
 export PATH="$pruce_cli_dir/plow-agents/bin:$PATH"
-plow-agents login
-plow-agents lines
 ```
 
-Siga a ativação indicada pela CLI usando seu telefone. Se precisar criar uma
-linha, execute `plow-agents login --new-line` e depois `plow-agents lines`.
-Escolha uma linha sua com status `free`; substitua `ln_xxx` abaixo pelo ID dela.
-Na raiz deste repositório, gere sua credencial e configure o Compose:
+Authenticate, activate your account as instructed by the CLI, and choose a
+line with status `free`. Use `login --new-line` if you need a new line.
 
 ```sh
+plow-agents login
+plow-agents lines
 plow-agents mint ln_xxx
 chmod 600 plow-credentials
 ```
 
-Crie um arquivo `.env` com estas duas linhas (não contém o token):
+Create `.env` in this repository:
 
 ```dotenv
 PRUCE_CREDENTIALS_FILE=./plow-credentials
 AGENT_ID=
 ```
 
-`.env` e `plow-credentials` são ignorados pelo Git e excluídos do build.
-Sem esse ajuste, o Compose mantém o caminho legado
-`../plow-hermes-agent/plow-credentials`; a instalação acima não depende dele.
-O bind é somente leitura e falha se o arquivo não existir.
+An empty `AGENT_ID` disables Agent Index registration and reporting. If you
+want this installation counted for the already registered Prucê agent and
+accept the reporting described below, set `AGENT_ID=pruce` before first boot.
+
+Start the agent:
 
 ```sh
 docker compose build
 docker compose up -d
+docker compose logs -f agent
 ```
 
-Envie uma mensagem à linha escolhida pelo iMessage/Plow Chat, por exemplo:
-“Tenho prova sábado e ainda não comecei”. O primeiro boot pode levar alguns
-minutos. Para reiniciar depois, use `docker compose restart agent` na mesma
-pasta. O volume preserva contexto, pendências e identidade da instalação.
-Não compartilhe credenciais, dumps do volume ou logs sem revisão.
+When the log shows that Plow configured the selected chat, message your line
+through iMessage or Plow Chat. Reuse this repository and Compose project for
+future starts. `docker compose restart agent` preserves the named volume and
+the owner's open loops. Do not run two gateways with the same line or home, and
+do not use `docker compose down -v` unless you intend to erase local memory.
 
-Cada instalação independente usa seu próprio volume. O projeto Compose padrão
-é `pruce`; para duas instalações na mesma máquina, use nomes de projeto distintos
-com `docker compose -p <nome>` em TODOS os comandos. Recriações da mesma instalação
-reutilizam o mesmo nome/volume. Não clone volumes entre pessoas. Não apague volumes.
-Nunca execute dois gateways sobre a mesma linha ou sobre o mesmo home.
+The Compose file retains a legacy default credential path for the original
+development layout. Setting `PRUCE_CREDENTIALS_FILE=./plow-credentials` as
+shown above makes a clean installation independent of that layout. The private
+file is mounted read-only and excluded from Git and the Docker build context.
 
-## Agent Index: o que cada identificador significa
+## Optional connected capabilities
 
-| Item | Função |
-| --- | --- |
-| Credencial Plow | Segredo da instalação. O client a usa no bootstrap para obter uma assertion da Plow; não a envia como bearer de métricas ao Index. |
-| `AGENT_ID` | Identificador público do produto, futuramente `pruce`. Vazio por padrão: nenhuma chamada de registro ou reporting. |
-| `install_id` | Aleatório, gerado exclusivamente pelo client oficial. Identifica uma instalação persistente, não o produto nem uma conversa. |
-| Chave `aik_…` | Segredo emitido pelo Index, usado para os relatórios posteriores. |
+The official stack reaches the owner's Mac through **Plow Latch**. When Latch
+is configured and the Mac is awake, its MCP relay publishes the tools and
+instructions available on that machine.
 
-`$HERMES_HOME/.agent-index.json` guarda install_id e chave juntos. O ledger de
-contagem fica em `$HERMES_HOME/.agent-index-state.json`, ao lado do `state.db`.
-Tudo permanece no volume existente `/var/lib/hermes`. Não edite, copie ou apague
-esses arquivos para aumentar contagens. Não registramos o produto a partir de um
-home temporário que seria descartado depois.
+- Gmail and Google Calendar use the bundled `google-workspace` skill through
+  Latch. The agent never creates or stores a local Google OAuth token.
+- Browser work uses Latch's browser tools on the owner's Mac. The container's
+  unsupported browser toolset is deliberately disabled.
+- Files and other capabilities depend on the skills that the connected Latch
+  instance actually publishes. This release does not claim a dedicated Google
+  Drive connector.
 
-O serviço s6 `agent-index` depende de `plow-init`. Sem `AGENT_ID`, aguarda sem
-invocar o client. Quando autorizado e configurado, consulta `status`: 0 reporta;
-3 registra a instalação pelo client; 2 ou outro erro não registra nem reporta.
-Após cada ciclo espera 300 segundos. Registro automático não passa metadados da
-página. A revisão oficial corrigida aceita 409 como adesão de um instalador ao
-produto de outro autor, sem tomar sua página. Nenhum protocolo é reimplementado.
+Prucê does not ask for these integrations during a generic welcome. It offers
+one only when it can explain the immediate result and initial access scope. A
+connected read capability never implies permission to send email, submit a
+form, delete, spend, or book. Consequential actions follow the confirmation and
+approval rules supplied by the official stack.
 
-O subprocesso recebe ambiente explícito: o token Plow só é passado ao bootstrap,
-com o endpoint publicado pela base; status e reporting não o herdam. O client e o
-supervisor ficam em caminhos da imagem pertencentes a root. O client roda como
-`hermes`, com HOME e HERMES_HOME apontando ao volume do agente.
+Latch installation and account connection remain manual. Start with the
+[official Latch page](https://plow.co/latch); do not send passwords, OAuth
+tokens, or API keys to Prucê in chat.
 
-### Privacidade e limites
+## Privacy
 
-As conversas passam pela Plow e pelo provedor de modelo da stack; não são um
-processamento exclusivamente local. Contexto e pendências ficam no volume local.
-A proteção e retenção nos serviços externos seguem as políticas desses serviços.
+Open loops and context live in the installation's Docker volume. They may
+contain personal information, so do not publish the volume, `state.json`,
+credential file, or unreviewed logs. Conversations pass through Plow and the
+configured model provider; their retention and protection follow those
+services' policies.
 
-O reporter lê contadores de `session_model_usage` no banco Hermes em modo somente
-leitura. Envia data, modelo e tokens de entrada, saída, leitura/escrita de cache,
-sem prompts, mensagens, títulos de pendências, documentos ou custos. O JSON de
-open loops não é uma fonte de métricas. Stories não são publicadas pelo serviço.
-A janela padrão é de 28 dias; contagens diárias são mantidas pelo client oficial,
-sem somar relatórios repetidos como novos gastos. A recuperação inicial de
-histórico que atravessa dias é limitada pelo formato dos contadores Hermes.
+Agent Index reporting is opt-in through `AGENT_ID`. The pinned official client
+reads Hermes' `session_model_usage` counters and sends day, model, input/output
+tokens, and cache read/write tokens every five minutes. It does **not** read or
+send prompts, messages, open-loop titles, documents, or the Prucê JSON state.
+Reporting still reveals activity patterns by day and model.
 
-Uso por dia/modelo revela padrões de atividade. Metadados da página são públicos,
-e a autoria vem da identidade Plow. Cada instalador deve entender e aceitar essa
-publicação antes de definir AGENT_ID. O registro é uma operação externa; uma
-execução normal do reporter também pode enviar o sinal de medição pendente.
+The client generates a random `install_id` and an `aik_` reporting key for each
+installation and stores them in the same private volume. Repeated reports use a
+local ledger so totals are not counted as new usage. Never copy those files
+between people or create an installation ID manually. Without `AGENT_ID`, the
+s6 service does not invoke the client.
 
-A identidade de instalação não é o indicador “Success installs” do site. Essa
-métrica é calculada pelo Index. Não emitimos beacons próprios nem inventamos um
-contador. Não instalamos agentsview nem montamos dados de outros agentes.
+## Test and contribute
 
-## Testes isolados
-
-Teste o núcleo sem Docker:
+Run the state and prompt-contract tests locally:
 
 ```sh
-python3 -B -m unittest discover -s tests -p test_state.py -v
+python3 -B -m unittest discover -s tests -v
 AGENT_ID= docker compose config --quiet
 ```
 
-Construa uma imagem de verificação. O build baixa somente dependências públicas;
-não inicia serviços nem acessa a credencial montada pelo Compose:
+Validate the exact client installed in the image without credentials, real
+volumes, or network access during the test run:
 
 ```sh
 docker build --platform linux/amd64 -t pruce-index-check:local .
-```
-
-Execute os testes sobre o client REAL instalado, com dados/HTTP fictícios:
-
-```sh
 python3 -B tests/run_in_image.py
 ```
 
-O runner copia apenas uma lista explícita de arquivos de código para uma pasta
-temporária e a monta para testes. Não monta o checkout, credenciais ou volumes
-reais. Executa a suíte e o self-check oficial em containers descartáveis com
-`--network none`, root filesystem somente leitura e estado em tmpfs. O entrypoint
-é Python, não `/init`: nenhum gateway ou supervisor é iniciado. O self-check
-precisa de `/tmp:exec` para seu coletor fictício; a rede continua bloqueada.
+The runner mounts only an explicit source allowlist into disposable containers.
+It uses synthetic identity and usage data, a read-only root filesystem, tmpfs
+state, `--network none`, and Python as the entrypoint, so neither the gateway
+nor s6 services start. The Docker build itself downloads only public pinned
+dependencies and verifies the Agent Index client checksum.
 
-A base fixada é linux/amd64. Em Mac ARM, essa validação usa a emulação do Docker.
-Para testar no host, `PRUCE_INDEX_CLIENT` pode apontar ao script público baixado
-em pasta temporária e validado pelo checksum. A suíte verifica o checksum ANTES
-de executar o client, sem download automático nem autenticação real:
+Keep contributions focused on reusable Student Life + Adulting decisions.
+Prefer a small, deep behavior over domain-specific skills or a generic task
+manager. Do not commit credentials, state, install identity, conversation
+content, or account data.
 
-```sh
-PRUCE_INDEX_CLIENT=/caminho/temporario/agent_index_client.py \
-  python3 -B -m unittest discover -s tests -v
-```
+## License
 
-`--dry-run` não envia métricas, mas pode escrever o ledger local e exige estado de
-chave. Use-o somente no ambiente sintético dos testes. NÃO combine `--register`
-com `--dry-run`: registro tem precedência e não seria uma simulação.
+Prucê's original code and documentation are MIT licensed. The official Agent
+Index client and the adapted s6 supervisor remain Apache-2.0; see `NOTICE` and
+`LICENSES/Apache-2.0.txt`. The inherited Plow and Hermes image keeps its own
+upstream licenses and notices.
 
-## Publicação e registro futuros — exigem autorização
-
-Nada nesta implementação registra o produto ou habilita reporting por padrão.
-A sequência futura é:
-
-1. Revisar e autorizar a publicação do repositório MIT e tutorial de instalação.
-2. Confirmar disponibilidade/autoria de `pruce`, descrição pública e links.
-3. Autorizar rebuild/recriação do Prucê com `AGENT_ID` vazio, preservando o volume,
-   para disponibilizar o client sem iniciar reporting. Não iniciar outro gateway.
-4. Autorizar o registro. Rodá-lo dentro dessa instalação, como usuário hermes,
-   usando o ambiente que a base já publicou. Não extrair credenciais para o host.
-   Exemplo para executar SOMENTE nessa etapa, com metadados revisados:
-
-```sh
-AGENT_ID= docker compose exec -T agent \
-  /command/with-contenv /command/s6-setuidgid hermes \
-  env HOME=/var/lib/hermes HERMES_HOME=/var/lib/hermes \
-  /opt/hermes/.venv/bin/python3 /opt/plow/agent-index-client.py \
-  --register --agent pruce --name "Prucê" \
-  --blurb "Ajuda estudantes e jovens adultos a avançar pendências até um resultado claro." \
-  --runtime "Hermes / Plow" \
-  --repo "<URL pública aprovada>" --install-url "<URL HTTPS do tutorial>"
-```
-
-5. Conferir que a página pertence ao autor correto. Um 409 agora permite adesão
-   como instalador; portanto, exit 0 sozinho NÃO comprova autoria de `pruce`.
-6. Autorizar reporting e a atualização do container: definir `AGENT_ID=pruce`
-   no ambiente do Compose e recriar o serviço com a mesma imagem/volume. Esta
-   configuração deve ser mantida nas operações futuras. A partir daí, instalações
-   novas registram sua própria identidade automaticamente e reportam a cada ciclo.
-7. Conferir métricas reais e uma instalação independente, com credenciais próprias.
-8. Autorizar e solicitar Verified pelo canal oficial disponível. Reporter não
-   concede Verified: a equipe precisa avaliar/instalar/executar o produto.
-
-Desabilitar reporting futuramente exige recriar o serviço com AGENT_ID vazio,
-preservando o volume; isso não remove informações já publicadas no Index.
-O registro, reporting real, publicação e solicitação de Verified NÃO foram
-executados nesta etapa.
-
-## Licença e referências
-
-Código original do Prucê: MIT, em `LICENSE`. Client oficial e supervisor adaptado:
-Apache-2.0; atribuições em `NOTICE` e texto em `LICENSES/Apache-2.0.txt`.
-Isso não relicencia os componentes da imagem base.
-
-- [Client oficial fixado](https://github.com/plow-pbc/agent-index-client/tree/87901f8b182a8a7c65ee3dd7267f8f835ee2a545)
-- [Exemplo oficial Life Assistant](https://github.com/plow-pbc/life-assistant-hermes-agent)
-- [Agent Index e informações de Verified](https://aiworthusing.com/agent-index)
+- [Plow Hermes base](https://github.com/plow-pbc/plow-hermes-agent)
+- [Official Agent Index client pin](https://github.com/plow-pbc/agent-index-client/tree/87901f8b182a8a7c65ee3dd7267f8f835ee2a545)
+- [Official Life Assistant variant](https://github.com/plow-pbc/life-assistant-hermes-agent)
