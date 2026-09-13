@@ -9,3 +9,5 @@ __pycache__/
 /.agent-index.json
 /.agent-index-state.json
 /.agent-index.lock
+
+.env
