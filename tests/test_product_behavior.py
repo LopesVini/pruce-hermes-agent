@@ -78,6 +78,25 @@ class ProductBehaviorTests(unittest.TestCase):
         self.assertIn("verify it before claiming a connected-source scan", source_rules)
         self.assertIn("failed or unavailable tools do not refresh coverage", source_rules)
 
+    def test_supported_integration_is_distinct_from_current_availability(self):
+        source_rules = normalized(SOURCES)
+        self.assertIn("prucê technically supports that source", source_rules)
+        self.assertIn("configured and available in this deployment", source_rules)
+        self.assertIn("not connected **in this installation**", source_rules)
+        self.assertIn("never say “this version has no integration”", source_rules)
+
+    def test_owner_source_does_not_imply_access_or_capability(self):
+        source_rules = normalized(SOURCES)
+        self.assertIn("a source-map entry establishes the first fact", source_rules)
+        self.assertIn("does not prove the other facts", source_rules)
+        self.assertIn("do not promise support merely because the owner uses the source", source_rules)
+
+    def test_access_and_unsupported_claims_require_real_capability_checks(self):
+        persona = normalized(PERSONA)
+        self.assertIn("never claim access before live verification", persona)
+        self.assertIn("call a capability unsupported only after checking", persona)
+        self.assertIn("temporary fallback", persona)
+
     def test_declined_source_offer_is_not_repeated_for_same_context(self):
         triage = normalized(TRIAGE)
         self.assertIn("record that decision and its concrete outcome context", triage)
