@@ -77,6 +77,13 @@ reconciles bundled skills into the persistent home. Open loops remain in
 `/var/lib/hermes/pruce/sources.json`. There is no external database,
 task-manager framework, or Prucê API.
 
+Deadline wording such as “tomorrow night” remains available as history, while
+an optional temporal object anchors it to the capture instant and the owner's
+known IANA timezone. It preserves date, exact datetime, day-part, range, or
+unresolved granularity. Older records remain readable; relative legacy text
+without a trustworthy capture timestamp is reconciled only when it matters and
+is never reinterpreted using today's date.
+
 ## Source-aware coverage
 
 Prucê does not assume that one app contains the owner's whole life. It learns
@@ -217,10 +224,10 @@ s6 service does not invoke the client.
 
 ## Test and contribute
 
-Run the state and prompt-contract tests locally:
+Run the state, source-map, and prompt-contract tests locally:
 
 ```sh
-python3 -B -m unittest discover -s tests -v
+python3 -B -m unittest tests.test_state tests.test_sources tests.test_product_behavior -v
 AGENT_ID= docker compose config --quiet
 ```
 

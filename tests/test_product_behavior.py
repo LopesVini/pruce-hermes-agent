@@ -52,6 +52,21 @@ class ProductBehaviorTests(unittest.TestCase):
         self.assertIn("Do not expose a score", TRIAGE)
         self.assertIn("ask one focused question", TRIAGE)
 
+    def test_ambiguous_deadline_is_not_ranked_as_confirmed(self):
+        triage = normalized(TRIAGE)
+        self.assertIn("unresolved` deadline", triage)
+        self.assertIn("uncertainty rather than a confirmed urgent date", triage)
+        self.assertIn("reconcile an important deadline", triage)
+        self.assertIn("consult a reliable live clock", triage)
+
+    def test_relative_time_is_anchored_without_fake_precision(self):
+        tasks = normalized(TASKS)
+        persona = normalized(PERSONA)
+        self.assertIn("relative time must be anchored once", tasks)
+        self.assertIn("never render the historical `raw` as a new relative fact", tasks)
+        self.assertIn("never infer the owner's timezone from the container", tasks)
+        self.assertIn("never guess the owner's timezone", persona)
+
     def test_life_scan_is_on_demand_and_source_honest(self):
         self.assertIn("Known-context scan", TRIAGE)
         self.assertIn("Connected-source scan", TRIAGE)

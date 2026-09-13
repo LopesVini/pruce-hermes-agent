@@ -1,12 +1,17 @@
 """Prucê's small local record. Standard library only; no network or scheduler."""
 import argparse
+import copy
+from datetime import date, datetime, time, timedelta
 import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
+import unicodedata
 import uuid
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 STATUSES = {
@@ -16,6 +21,14 @@ STATUSES = {
 EVIDENCE_STATES = {"completed", "waiting_for_third_party"}
 COMPLETED_NEXT_STEP = "Nenhuma ação pendente."
 DEFAULT_PATH = Path(os.environ.get("HERMES_HOME", "/var/lib/hermes")) / "pruce/state.json"
+TEMPORAL_KINDS = {"datetime", "date", "day_part", "date_range", "unresolved"}
+CAPTURE_BASES = {"message_timestamp", "runtime_clock", "unknown"}
+DAY_PARTS = {"morning", "afternoon", "evening", "night"}
+WEEKDAYS = {
+    "segunda": 0, "segunda-feira": 0, "terca": 1, "terca-feira": 1,
+    "quarta": 2, "quarta-feira": 2, "quinta": 3, "quinta-feira": 3,
+    "sexta": 4, "sexta-feira": 4, "sabado": 5, "domingo": 6,
+}
 
 
 def require(condition, message):
@@ -34,9 +47,90 @@ def keys(value, allowed, required=()):
     require(set(required) <= value.keys(), "missing required fields")
 
 
+def parse_aware_datetime(value, name):
+    text(value, name, 64)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"invalid {name}") from error
+    require(parsed.tzinfo is not None and parsed.utcoffset() is not None,
+            f"{name} must include a UTC offset")
+    return parsed
+
+
+def parse_date(value, name):
+    text(value, name, 10)
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError(f"invalid {name}") from error
+
+
+def timezone(value):
+    text(value, "timezone", 100)
+    try:
+        return ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise ValueError("invalid timezone") from error
+
+
+def validate_evidence(evidence):
+    if evidence is not None:
+        keys(evidence, {"kind", "detail"}, {"kind", "detail"})
+        require(evidence["kind"] in ("tool_result", "user_confirmation"),
+                "invalid evidence kind")
+        text(evidence["detail"], "evidence detail")
+
+
+def validate_temporal(temporal):
+    if temporal is None:
+        return
+    fields = {"raw", "captured_at", "capture_basis", "timezone", "kind",
+              "value", "reason", "source", "evidence"}
+    keys(temporal, fields, fields)
+    text(temporal["raw"], "temporal raw", 300)
+    require(temporal["capture_basis"] in CAPTURE_BASES, "invalid capture basis")
+    text(temporal["source"], "temporal source", 100)
+    require(temporal["kind"] in TEMPORAL_KINDS, "invalid temporal kind")
+    if temporal["captured_at"] is None:
+        require(temporal["capture_basis"] == "unknown",
+                "missing captured_at requires unknown capture basis")
+    else:
+        parse_aware_datetime(temporal["captured_at"], "captured_at")
+        require(temporal["capture_basis"] != "unknown",
+                "captured_at requires a known capture basis")
+    if temporal["timezone"] is not None:
+        timezone(temporal["timezone"])
+    kind = temporal["kind"]
+    value = temporal["value"]
+    if kind == "unresolved":
+        require(value is None, "unresolved temporal value must be null")
+        text(temporal["reason"], "temporal reason", 300)
+    else:
+        require(temporal["captured_at"] is not None and temporal["timezone"] is not None,
+                "resolved temporal values require captured_at and timezone")
+        require(temporal["reason"] is None, "resolved temporal reason must be null")
+        if kind == "datetime":
+            instant = parse_aware_datetime(value, "temporal datetime")
+            require(instant.utcoffset() == instant.astimezone(timezone(temporal["timezone"])).utcoffset(),
+                    "temporal datetime offset disagrees with timezone")
+        elif kind == "date":
+            parse_date(value, "temporal date")
+        elif kind == "day_part":
+            keys(value, {"date", "part"}, {"date", "part"})
+            parse_date(value["date"], "day-part date")
+            require(value["part"] in DAY_PARTS, "invalid day part")
+        elif kind == "date_range":
+            keys(value, {"start", "end"}, {"start", "end"})
+            start = parse_date(value["start"], "range start")
+            end = parse_date(value["end"], "range end")
+            require(start <= end, "invalid temporal range")
+    validate_evidence(temporal["evidence"])
+
+
 def validate_task(task):
-    fields = {"id", "title", "status", "next_step", "due", "evidence"}
-    keys(task, fields, fields)
+    required = {"id", "title", "status", "next_step", "due", "evidence"}
+    keys(task, required | {"temporal"}, required)
     text(task["id"], "id", 64)
     text(task["title"], "title", 300)
     text(task["next_step"], "next_step")
@@ -44,10 +138,11 @@ def validate_task(task):
     if task["due"] is not None:
         text(task["due"], "due", 300)
     evidence = task["evidence"]
-    if evidence is not None:
-        keys(evidence, {"kind", "detail"}, {"kind", "detail"})
-        require(evidence["kind"] in ("tool_result", "user_confirmation"), "invalid evidence kind")
-        text(evidence["detail"], "evidence detail")
+    validate_evidence(evidence)
+    validate_temporal(task.get("temporal"))
+    if task.get("temporal") is not None:
+        require(task["due"] == task["temporal"]["raw"],
+                "due must preserve temporal raw text")
     require(task["status"] not in EVIDENCE_STATES or evidence is not None,
             "this status requires evidence or user confirmation")
 
@@ -80,6 +175,158 @@ def parse(raw):
     return json.loads(raw, object_pairs_hook=strict_object, parse_constant=reject_constant)
 
 
+def folded(value):
+    return "".join(character for character in unicodedata.normalize("NFKD", value.casefold())
+                   if not unicodedata.combining(character))
+
+
+def looks_relative(value):
+    value = folded(value)
+    terms = ("hoje", "amanha", "ontem", "essa semana", "esta semana",
+             "daqui a", *WEEKDAYS.keys())
+    return (any(re.search(rf"\b{re.escape(term)}\b", value) for term in terms)
+            or bool(re.search(r"\bem\s+\d+\s+dias?\b", value)))
+
+
+def temporal_record(raw, captured_at, capture_basis, timezone_name, kind,
+                    value, reason, source, evidence):
+    result = {
+        "raw": raw, "captured_at": captured_at, "capture_basis": capture_basis,
+        "timezone": timezone_name, "kind": kind, "value": value,
+        "reason": reason, "source": source, "evidence": evidence,
+    }
+    validate_temporal(result)
+    return result
+
+
+def normalize_temporal(data):
+    fields = {"raw", "captured_at", "capture_basis", "timezone", "source", "evidence"}
+    keys(data, fields, {"raw", "captured_at", "capture_basis", "timezone", "source"})
+    raw = data["raw"]
+    text(raw, "temporal raw", 300)
+    source = data["source"]
+    text(source, "temporal source", 100)
+    evidence = data.get("evidence")
+    validate_evidence(evidence)
+    captured_raw = data["captured_at"]
+    capture_basis = data["capture_basis"]
+    require(capture_basis in CAPTURE_BASES - {"unknown"}, "normalization needs a capture basis")
+    captured = parse_aware_datetime(captured_raw, "captured_at")
+    timezone_name = data["timezone"]
+    if timezone_name is None:
+        return temporal_record(raw, captured_raw, capture_basis, None, "unresolved", None,
+                               "timezone_unknown", source, evidence)
+    zone = timezone(timezone_name)
+    local = captured.astimezone(zone)
+    phrase = folded(raw)
+    clock = re.search(r"\b(?:as)\s*(\d{1,2})(?::(\d{2}))?\s*h?\b", phrase)
+    calendar_date = re.search(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{4}))?\b", phrase)
+    if calendar_date:
+        day, month = int(calendar_date.group(1)), int(calendar_date.group(2))
+        explicit_year = calendar_date.group(3)
+        year = int(explicit_year) if explicit_year else local.year
+        try:
+            target = date(year, month, day)
+        except ValueError as error:
+            raise ValueError("invalid deadline date") from error
+        if explicit_year is None and target < local.date():
+            return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                                   "unresolved", None, "year_ambiguous", source, evidence)
+        if clock:
+            hour, minute = int(clock.group(1)), int(clock.group(2) or 0)
+            require(0 <= hour <= 23 and 0 <= minute <= 59, "invalid deadline time")
+            value = datetime.combine(target, time(hour, minute), zone).isoformat()
+            return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                                   "datetime", value, None, source, evidence)
+        if re.search(r"\b(?:a|de) noite\b", phrase):
+            value = {"date": target.isoformat(), "part": "night"}
+            return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                                   "day_part", value, None, source, evidence)
+        return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                               "date", target.isoformat(), None, source, evidence)
+    target = None
+    relative_days = re.search(r"\b(?:daqui a|em)\s+(\d+)\s+dias?\b", phrase)
+    if relative_days:
+        target = local.date() + timedelta(days=int(relative_days.group(1)))
+    elif re.search(r"\bamanha\b", phrase):
+        target = local.date() + timedelta(days=1)
+    elif re.search(r"\bhoje\b", phrase):
+        target = local.date()
+    elif re.search(r"\bontem\b", phrase):
+        target = local.date() - timedelta(days=1)
+    if target is not None:
+        if clock:
+            hour, minute = int(clock.group(1)), int(clock.group(2) or 0)
+            require(0 <= hour <= 23 and 0 <= minute <= 59, "invalid deadline time")
+            value = datetime.combine(target, time(hour, minute), zone).isoformat()
+            return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                                   "datetime", value, None, source, evidence)
+        if re.search(r"\b(?:a|de) noite\b", phrase):
+            value = {"date": target.isoformat(), "part": "night"}
+            return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                                   "day_part", value, None, source, evidence)
+        return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                               "date", target.isoformat(), None, source, evidence)
+    if re.search(r"\b(?:essa|esta) semana\b", phrase):
+        start = local.date() - timedelta(days=local.weekday())
+        value = {"start": start.isoformat(), "end": (start + timedelta(days=6)).isoformat()}
+        return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                               "date_range", value, None, source, evidence)
+    for name, weekday in WEEKDAYS.items():
+        if re.search(rf"\b{re.escape(name)}\b", phrase):
+            delta = (weekday - local.weekday()) % 7
+            explicit_next = (re.search(r"\bproxim[oa]\b", phrase)
+                             or re.search(r"\bque vem\b", phrase))
+            if delta == 0 and not explicit_next:
+                return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                                       "unresolved", None, "weekday_same_day_ambiguous",
+                                       source, evidence)
+            target = local.date() + timedelta(days=delta or 7)
+            if re.search(r"\b(?:a|de) noite\b", phrase):
+                value = {"date": target.isoformat(), "part": "night"}
+                return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                                       "day_part", value, None, source, evidence)
+            return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                                   "date", target.isoformat(), None, source, evidence)
+    return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                           "unresolved", None, "unsupported_or_ambiguous_expression",
+                           source, evidence)
+
+
+def temporal_identity(temporal):
+    if temporal is None or temporal["kind"] == "unresolved":
+        return None
+    return temporal["kind"], temporal["value"], temporal["timezone"]
+
+
+def temporal_status(data):
+    keys(data, {"temporal", "now"}, {"temporal", "now"})
+    temporal = data["temporal"]
+    validate_temporal(temporal)
+    if temporal is None or temporal["kind"] == "unresolved":
+        return {"relation": "unresolved"}
+    now = parse_aware_datetime(data["now"], "now").astimezone(timezone(temporal["timezone"]))
+    kind, value = temporal["kind"], temporal["value"]
+    if kind == "datetime":
+        instant = parse_aware_datetime(value, "temporal datetime")
+        relation = "past" if instant < now else "future"
+    elif kind in {"date", "day_part"}:
+        target = parse_date(value if kind == "date" else value["date"], "temporal date")
+        relation = "past" if target < now.date() else "future" if target > now.date() else "today"
+    else:
+        start, end = parse_date(value["start"], "range start"), parse_date(value["end"], "range end")
+        relation = "future" if now.date() < start else "past" if now.date() > end else "current"
+    return {"relation": relation}
+
+
+def legacy_temporal(task):
+    due = task.get("due")
+    if task.get("temporal") is None and isinstance(due, str) and looks_relative(due):
+        return temporal_record(due, None, "unknown", None, "unresolved", None,
+                               "legacy_relative_without_capture", "legacy", None)
+    return None
+
+
 def read(path):
     try:
         state = parse(path.read_text(encoding="utf-8"))
@@ -98,9 +345,16 @@ def apply(state, command, data):
         state.update(data)
         result = {"introduced": state["introduced"], "context": state["context"]}
     elif command == "create":
-        keys(data, {"title", "next_step", "status", "due"}, {"title", "next_step"})
+        keys(data, {"title", "next_step", "status", "due", "temporal"}, {"title", "next_step"})
+        if "temporal" in data and data["temporal"] is not None:
+            if "due" in data:
+                require(data["due"] == data["temporal"]["raw"],
+                        "due must preserve temporal raw text")
+            data = {**data, "due": data["temporal"]["raw"]}
+        elif isinstance(data.get("due"), str) and looks_relative(data["due"]):
+            raise ValueError("relative due requires anchored temporal metadata")
         task = {"id": uuid.uuid4().hex[:12], "status": "needs_action", "due": None,
-                "evidence": None, **data}
+                "evidence": None, "temporal": None, **data}
         validate_task(task)
         require(not any(t["title"].strip().casefold() == task["title"].strip().casefold()
                         and t["status"] != "completed" for t in state["tasks"]),
@@ -108,10 +362,26 @@ def apply(state, command, data):
         state["tasks"].append(task)
         result = task
     else:
-        keys(data, {"id", "title", "status", "next_step", "due", "evidence"}, {"id"})
+        keys(data, {"id", "title", "status", "next_step", "due", "evidence", "temporal"}, {"id"})
         require(len(data) > 1, "empty update")
         task = next((t for t in state["tasks"] if t["id"] == data["id"]), None)
         require(task is not None, "unknown task id")
+        if "temporal" in data and data["temporal"] is not None:
+            validate_temporal(data["temporal"])
+            if "due" in data:
+                require(data["due"] == data["temporal"]["raw"],
+                        "due must preserve temporal raw text")
+            data = {**data, "due": data["temporal"]["raw"]}
+            old_identity = temporal_identity(task.get("temporal"))
+            new_identity = temporal_identity(data["temporal"])
+            if old_identity is not None and new_identity is not None and old_identity != new_identity:
+                require(data["temporal"]["evidence"] is not None,
+                        "changed resolved deadline requires reconciliation evidence")
+        elif isinstance(data.get("due"), str) and looks_relative(data["due"]):
+            raise ValueError("relative due requires anchored temporal metadata")
+        elif data.get("temporal", "not-present") is None and "due" not in data \
+                and task.get("temporal") is not None and looks_relative(task.get("due", "")):
+            raise ValueError("clearing temporal metadata also requires clearing due")
         target = data.get("status", task["status"])
         changed = target != task["status"]
         if changed and target in EVIDENCE_STATES:
@@ -147,10 +417,19 @@ def write(path, state):
 
 def run(path, command, data=None):
     path = Path(path)
+    if command == "normalize-time":
+        return normalize_temporal(data)
+    if command == "time-status":
+        return temporal_status(data)
     if command in {"read", "active"}:
         state = read(path)  # Read-only: keep closed records intact on disk.
         if command == "active":
             state["tasks"] = [task for task in state["tasks"] if task["status"] != "completed"]
+            state = copy.deepcopy(state)
+            for task in state["tasks"]:
+                legacy = legacy_temporal(task)
+                if legacy is not None:
+                    task["temporal"] = legacy
         return state
     require(command in {"profile", "create", "update"}, "unknown command")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -166,7 +445,8 @@ def run(path, command, data=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("read", "active", "profile", "create", "update"))
+    parser.add_argument("command", choices=("read", "active", "profile", "create", "update",
+                                             "normalize-time", "time-status"))
     parser.add_argument("--state", type=Path, default=DEFAULT_PATH,
                         help="override the state file for isolated local tests")
     args = parser.parse_args()

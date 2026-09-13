@@ -24,6 +24,13 @@ class StateTests(unittest.TestCase):
     def create(self, title="Estudar termodinâmica"):
         return state.run(self.path, "create", {"title": title, "next_step": "Receber os tópicos"})
 
+    def normalize(self, raw, captured_at="2026-09-13T17:00:00-03:00",
+                  timezone="America/Sao_Paulo", **extra):
+        return state.run(self.path, "normalize-time", {
+            "raw": raw, "captured_at": captured_at, "capture_basis": "message_timestamp",
+            "timezone": timezone, "source": "user", **extra,
+        })
+
     def test_fresh_read_creates_nothing(self):
         self.assertEqual(state.run(self.path, "read"),
                          {"introduced": False, "context": "", "tasks": []})
@@ -166,9 +173,123 @@ class StateTests(unittest.TestCase):
 
     def test_partial_update_preserves_other_fields(self):
         task = self.create()
-        updated = state.run(self.path, "update", {"id": task["id"], "due": "Sábado; data ainda a confirmar"})
+        temporal = self.normalize("sábado", captured_at="2026-09-12T10:00:00-03:00")
+        updated = state.run(self.path, "update", {"id": task["id"], "temporal": temporal})
         self.assertEqual(updated["next_step"], task["next_step"])
         self.assertEqual(updated["title"], task["title"])
+
+    def test_tomorrow_is_anchored_and_does_not_move_next_day(self):
+        temporal = self.normalize("vence amanhã")
+        self.assertEqual(temporal["kind"], "date")
+        self.assertEqual(temporal["value"], "2026-09-14")
+        self.assertEqual(state.temporal_status({
+            "temporal": temporal, "now": "2026-09-14T09:00:00-03:00",
+        }), {"relation": "today"})
+        self.assertEqual(temporal["value"], "2026-09-14")
+
+    def test_tomorrow_at_time_becomes_absolute_datetime(self):
+        temporal = self.normalize("amanhã às 18h")
+        self.assertEqual(temporal["kind"], "datetime")
+        self.assertEqual(temporal["value"], "2026-09-14T18:00:00-03:00")
+
+    def test_explicit_local_date_and_time_becomes_absolute_datetime(self):
+        temporal = self.normalize("prazo prorrogado até 21/09 às 18h")
+        self.assertEqual(temporal["kind"], "datetime")
+        self.assertEqual(temporal["value"], "2026-09-21T18:00:00-03:00")
+
+    def test_explicit_date_at_night_keeps_day_part(self):
+        temporal = self.normalize("21/09 à noite")
+        self.assertEqual(temporal["kind"], "day_part")
+        self.assertEqual(temporal["value"], {"date": "2026-09-21", "part": "night"})
+
+    def test_tomorrow_at_night_preserves_day_part_without_fake_hour(self):
+        temporal = self.normalize("amanhã à noite")
+        self.assertEqual(temporal["kind"], "day_part")
+        self.assertEqual(temporal["value"], {"date": "2026-09-14", "part": "night"})
+        self.assertNotIn("time", temporal["value"])
+
+    def test_weekday_from_wednesday_resolves_and_same_day_is_ambiguous(self):
+        wednesday = self.normalize("prova sábado", "2026-09-16T12:00:00-03:00")
+        self.assertEqual((wednesday["kind"], wednesday["value"]), ("date", "2026-09-19"))
+        saturday = self.normalize("prova sábado", "2026-09-19T08:00:00-03:00")
+        self.assertEqual(saturday["kind"], "unresolved")
+        self.assertEqual(saturday["reason"], "weekday_same_day_ambiguous")
+        next_saturday = self.normalize("sábado que vem", "2026-09-19T08:00:00-03:00")
+        self.assertEqual(next_saturday["value"], "2026-09-26")
+
+    def test_relative_day_offset_is_anchored_for_future_conditions(self):
+        temporal = self.normalize("se não responderem em 3 dias")
+        self.assertEqual((temporal["kind"], temporal["value"]), ("date", "2026-09-16"))
+
+    def test_this_week_is_a_date_range(self):
+        temporal = self.normalize("essa semana", "2026-09-16T12:00:00-03:00")
+        self.assertEqual(temporal["kind"], "date_range")
+        self.assertEqual(temporal["value"], {"start": "2026-09-14", "end": "2026-09-20"})
+
+    def test_legacy_relative_due_is_unresolved_only_in_active_view(self):
+        task = self.create("Matrícula")
+        saved = state.read(self.path)
+        saved["tasks"][0].pop("temporal")
+        saved["tasks"][0]["due"] = "amanhã à noite"
+        self.path.write_text(json.dumps(saved))
+        active = state.run(self.path, "active")["tasks"][0]
+        self.assertEqual(active["temporal"]["kind"], "unresolved")
+        self.assertEqual(active["temporal"]["reason"], "legacy_relative_without_capture")
+        self.assertIsNone(active["temporal"]["captured_at"])
+        self.assertNotIn("temporal", state.run(self.path, "read")["tasks"][0])
+        self.assertEqual(active["id"], task["id"])
+
+    def test_new_relative_due_requires_temporal_metadata(self):
+        with self.assertRaisesRegex(ValueError, "anchored temporal metadata"):
+            state.run(self.path, "create", {
+                "title": "Matrícula", "next_step": "Enviar documentos", "due": "amanhã",
+            })
+        unresolved = state.temporal_record(
+            "amanhã", None, "unknown", None, "unresolved", None,
+            "message_timestamp_unavailable", "user", None,
+        )
+        task = state.run(self.path, "create", {
+            "title": "Matrícula", "next_step": "Confirmar a data", "temporal": unresolved,
+        })
+        self.assertEqual(task["due"], "amanhã")
+        self.assertEqual(task["temporal"]["kind"], "unresolved")
+
+    def test_past_deadline_is_not_treated_as_future(self):
+        temporal = self.normalize("vence amanhã")
+        relation = state.temporal_status({
+            "temporal": temporal, "now": "2026-09-15T08:00:00-03:00",
+        })
+        self.assertEqual(relation, {"relation": "past"})
+
+    def test_normalization_uses_selected_timezone(self):
+        captured = "2026-09-14T01:00:00+00:00"
+        sao_paulo = self.normalize("amanhã", captured, "America/Sao_Paulo")
+        tokyo = self.normalize("amanhã", captured, "Asia/Tokyo")
+        self.assertEqual(sao_paulo["value"], "2026-09-14")
+        self.assertEqual(tokyo["value"], "2026-09-15")
+        unknown = self.normalize("amanhã", captured, None)
+        self.assertEqual((unknown["kind"], unknown["reason"]),
+                         ("unresolved", "timezone_unknown"))
+
+    def test_external_conflicting_deadline_needs_reconciliation_evidence(self):
+        original = self.normalize("a inscrição fecha sexta")
+        task = state.run(self.path, "create", {
+            "title": "Inscrição", "next_step": "Enviar inscrição", "temporal": original,
+        })
+        newer = self.normalize("prazo prorrogado até 21/09 às 18h", source="gmail")
+        before = self.path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "reconciliation evidence"):
+            state.run(self.path, "update", {"id": task["id"], "temporal": newer})
+        self.assertEqual(self.path.read_bytes(), before)
+        newer["evidence"] = {"kind": "tool_result", "detail": "E-mail mais recente anunciou a prorrogação."}
+        updated = state.run(self.path, "update", {"id": task["id"], "temporal": newer})
+        self.assertEqual(updated["temporal"]["value"], "2026-09-21T18:00:00-03:00")
+
+    def test_open_loop_without_due_still_works(self):
+        task = self.create("Cancelar assinatura")
+        self.assertIsNone(task["due"])
+        self.assertIsNone(task["temporal"])
+        self.assertEqual(state.run(self.path, "active")["tasks"][0]["id"], task["id"])
 
     def test_corruption_is_not_reset(self):
         self.create()

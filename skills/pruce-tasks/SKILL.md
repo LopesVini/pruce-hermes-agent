@@ -25,9 +25,13 @@ python3 /var/lib/hermes/skills/pruce-tasks/scripts/state.py active
    When one message contains several independent outcomes, save each as its own
    small open loop, then use `pruce-triage` to choose where to begin.
 3. Use known context first. Ask only for the information needed for the next
-   useful step. Resolve ambiguous dates/timezones before scheduling anything
-   or treating a date as exact. A literal user deadline such as "sábado" may
-   be recorded as stated, alongside its message date; never invent a timestamp.
+   useful step. Relative time must be anchored once and never reinterpreted
+   from a later conversation. Preserve the user's wording in `due`, but use
+   `temporal.value` for reasoning. Preserve vague granularity: a date is not an
+   end-of-day timestamp, “à noite” is a day part without an invented hour, and
+   “essa semana” is a date range. If “sábado” is said on Saturday without enough
+   context, ask “Você quer dizer hoje ou sábado que vem?” for an important
+   deadline, or keep it unresolved until it matters.
 4. Do the authorized next step using currently available tools: prepare a study
    plan, improve supplied CV text, draft a request, organize supplied paperwork.
    If an account is inaccessible, say so and prepare what can be prepared.
@@ -104,12 +108,14 @@ PRUCE_JSON
 
 - `profile`: `{"introduced":true,"context":"Estuda engenharia."}`. Both keys
   optional; context replaces the previous string, so preserve known facts.
-- `create`: required `title`, `next_step`; optional `status`, `due`. Returns
+- `create`: required `title`, `next_step`; optional `status`, `due`, `temporal`. Returns
   the saved task including its ID. Reuse that ID for subsequent changes.
 - `update`: required `id`, plus any of `title`, `next_step`, `status`, `due`,
-  `evidence`. Unspecified fields stay unchanged. For example:
+  `temporal`, `evidence`. Unspecified fields stay unchanged. For example:
   `{"id":"<saved id>","status":"waiting_for_user","next_step":"Receber os tópicos da prova para montar o plano"}`.
-- `due`: null or a short deadline description grounded in the conversation.
+- `due`: null or the original short deadline wording. A new relative `due`
+  requires an anchored `temporal` object; the writer rejects relative wording
+  on its own.
 - `evidence`: null or `{"kind":"user_confirmation","detail":"Usuário confirmou nesta conversa que enviou o CV."}`;
   the other allowed kind is `tool_result`, with an actual receipt/result reference.
   Required for completed and waiting_for_third_party. It must support that
@@ -119,3 +125,55 @@ The script validates structure, not truth. You must verify the evidence against
 the conversation or tool result. Do not store entire emails, documents, secrets
 or speculative profile facts here. Context, next steps and short evidence are
 enough. Deadlines are stored only; this version schedules no notifications.
+
+## Temporal grounding
+
+Normalize a deadline before saving it:
+
+```sh
+python3 /var/lib/hermes/skills/pruce-tasks/scripts/state.py normalize-time <<'PRUCE_JSON'
+{"raw":"amanhã à noite","captured_at":"2026-09-13T17:00:00-03:00","capture_basis":"message_timestamp","timezone":"America/Sao_Paulo","source":"user"}
+PRUCE_JSON
+```
+
+Use the original message timestamp when the current event exposes it. In this
+stack, a normal Plow message may not expose that timestamp to Hermes. For a
+message known to be arriving live, read the live runtime clock at receipt and
+record `capture_basis: runtime_clock`. If delayed or backfilled delivery could
+change the date and the original timestamp is unavailable, keep `captured_at`
+null, `capture_basis: unknown`, and the temporal value unresolved; do not anchor
+it to processing time as if that were the sending time.
+Use an explicitly known owner/installation IANA timezone or a timezone returned
+by a live authorized device tool. Never infer the owner's timezone from the
+container clock, locale, phone number or language. If the timezone is unknown,
+normalization returns `kind: unresolved` with `reason: timezone_unknown`.
+
+The returned optional object contains `raw`, `captured_at`, `capture_basis`,
+`timezone`, `kind`, `value`, `reason`, `source`, and short `evidence`. Kinds are
+`datetime`, `date`, `day_part`, `date_range`, and `unresolved`. Pass it as
+`temporal` to `create` or `update`; the writer copies its raw wording to `due`.
+Open loops without deadlines keep both fields null and work as before.
+
+For a decision that depends on today, tomorrow, lateness or time remaining,
+read the current reliable clock and call `time-status` with the saved temporal
+object and an offset-aware `now`. Render from the normalized value and current
+relation: “amanhã, 14/09”, “hoje, 14/09”, “o prazo era ontem, 14/09”, or simply
+“14/09”. Never render the historical `raw` as a new relative fact.
+
+The `active` view exposes legacy relative `due` text without metadata as
+`unresolved` with `reason: legacy_relative_without_capture`; it does not rewrite
+the file. Reconcile only when that deadline becomes relevant. Do not normalize
+it using today's clock. Ask whether the loop is still pending and what the
+actual date was.
+
+When a connected source reports a changed deadline for the same open loop,
+compare source, recency and meaning. Do not silently replace a resolved value.
+The writer requires short reconciliation evidence for a different resolved
+value. If the newer source clearly announces an extension, update the same ID
+with `tool_result` evidence. If there is a real conflict, explain both dates and
+ask which to use or offer to verify the authoritative source before writing.
+
+Future follow-up conditions must reference normalized absolute temporal values
+and stable conditions such as “no response by [datetime]”, rather than storing
+fresh relative prose. This release only stores deadlines; it does not run cron,
+send reminders or monitor conditions.
