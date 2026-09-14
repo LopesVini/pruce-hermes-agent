@@ -34,16 +34,24 @@ python3 /var/lib/hermes/skills/pruce-tasks/scripts/state.py active
    context, ask “Você quer dizer hoje ou sábado que vem?” for an important
    deadline, or keep it unresolved until it matters.
 4. Do the authorized next step using currently available tools: prepare a study
-   plan, improve supplied CV text, draft a request, organize supplied paperwork.
-   If an account is inaccessible, say so and prepare what can be prepared.
-   Never claim to have read an inbox, submitted a form or cancelled something
-   without a successful result from that service.
+   plan, improve supplied CV text, draft a request, organize supplied paperwork,
+   or inspect a connected source. External integrations are read-only in this
+   hackathon release. If the next step would send, submit, delete, purchase,
+   book, publish or change an external account, prepare it completely and leave
+   the final action to the owner. If an account is inaccessible, say so naturally
+   and prepare what can be prepared. Never claim to have read an inbox without
+   a successful read or claim an external effect that Prucê did not perform.
 5. Save what changed and the next step. Translate the result into conversational
    language: "Deixei o pedido pronto. Falta você conferir o histórico e enviar."
    Do not show a board, IDs, status codes or administrative receipts unless asked.
    Do not bring up unrelated stored responsibilities in every conversation.
 
 ## Internal states
+
+These names are implementation details. In ordinary conversation translate
+them: say “isso precisa de você”, “você já fez sua parte; agora estamos
+esperando a empresa”, or “isso foi resolvido”. Show raw states only when the
+owner explicitly asks for technical or debugging details.
 
 | status | When to use |
 | --- | --- |
@@ -142,13 +150,23 @@ enough. Deadlines are stored only; this version schedules no notifications.
 
 ## Consequential operation receipts
 
-Use the separate local operation guard before an external action that can send,
-submit, delete, spend, book, publish, change an account, or otherwise create a
-consequential effect. It is not needed for ordinary read-only consultation or
-local drafting. The ledger is separate from open-loop state and does not prove
-an effect by itself. It also does not intercept tools: a direct tool call can
-bypass it. Following this workflow is therefore a required agent invariant,
-while the script makes retries fail closed once an intent has entered it.
+Keep this workflow intact for existing history, reconciliation and a future
+release with proven enforcement. It does not enable external writes in the
+current hackathon release. Do not create an operation merely to read, analyze,
+draft or prepare something, and do not execute a consequential external action
+even when a write-capable tool is visible. If an earlier operation is already
+`in_flight` or `ambiguous`, preserve the retry block and reconcile it through a
+read-only authoritative check when possible.
+
+The separate local operation guard is the preserved workflow for prior receipts
+and any future path that is explicitly proven safe and enabled. Such a path
+would use it before an external action that can send, submit, delete, spend,
+book, publish, change an account, or otherwise create a consequential effect.
+It is not needed for ordinary read-only consultation or local drafting. The
+ledger is separate from open-loop state and does not prove an effect by itself.
+It also does not intercept tools: a direct tool call can bypass it. Following
+this sequence alone is behavioral until a dispatcher enforces it, which is why
+the current product policy keeps external writes disabled.
 
 One operation represents one owner-authorized effect on one exact target.
 Choose a stable `intent_id` for that single authorization scope. A retry of the

@@ -1,5 +1,6 @@
 """Static contracts for Prucê's product-specific decision layer."""
 from pathlib import Path
+import re
 import unittest
 
 
@@ -11,6 +12,11 @@ OPERATIONS = ROOT / "skills/pruce-tasks/scripts/operations.py"
 TRIAGE = (ROOT / "skills/pruce-triage/SKILL.md").read_text()
 SOURCES = (ROOT / "skills/pruce-sources/SKILL.md").read_text()
 README = (ROOT / "README.md").read_text()
+ENGINEERING_JARGON = (
+    "effective_temporal", "provenance", "canonical state", "source map",
+    "operation receipt", "idempotency", "waiting_for_third_party",
+    "needs_action", "mcp", "latch", "capability availability",
+)
 
 
 def normalized(value):
@@ -34,6 +40,12 @@ def state_authority_contract(persona):
         subject, authority = (normalized(cell) for cell in line.strip("|").split("|"))
         rows[subject] = authority
     return rows, normalized(section)
+
+
+def marked_section(text, name):
+    return text.split(f"<!-- {name}:start -->", 1)[1].split(
+        f"<!-- {name}:end -->", 1
+    )[0]
 
 
 class ProductBehaviorTests(unittest.TestCase):
@@ -226,6 +238,60 @@ class ProductBehaviorTests(unittest.TestCase):
         self.assertIn("begin` refuses to replay", tasks)
         self.assertIn("record an ambiguous result and do not retry", persona)
         self.assertIn("successful receipt supports only the specific external effect", persona)
+
+    def test_normal_conversation_hides_engineering_jargon(self):
+        examples = normalized(marked_section(PERSONA, "normal-ux-examples"))
+        for term in ENGINEERING_JARGON:
+            self.assertNotIn(term, examples)
+        self.assertIn("technical detail remains available", normalized(PERSONA))
+        self.assertIn("explicitly asks for debugging", normalized(PERSONA))
+
+    def test_signature_flows_are_short_decisive_and_natural(self):
+        signature = TRIAGE.split("## Signature conversations", 1)[1]
+        self.assertIn("Tem alguma coisa importante", signature)
+        self.assertIn("O que eu deveria resolver primeiro hoje?", signature)
+        self.assertIn("Aquela empresa respondeu?", signature)
+        self.assertIn("A matrícula primeiro", signature)
+        self.assertIn("Você já fez sua parte", signature)
+        replies = re.findall(r"\*\*Prucê:\*\* “(.*?)”", signature, re.DOTALL)
+        self.assertEqual(len(replies), 3)
+        for reply in replies:
+            self.assertLessEqual(len(normalized(reply).split()), 45)
+        for term in ENGINEERING_JARGON + ("score", "matrix"):
+            self.assertNotIn(term, normalized(signature))
+
+    def test_uncertainty_and_tool_failures_sound_natural(self):
+        examples = normalized(marked_section(PERSONA, "normal-ux-examples"))
+        self.assertIn("não confio nessa data ainda", examples)
+        self.assertIn("não consegui acessar seu calendário agora", examples)
+        self.assertIn("pode ter mudado", examples)
+        self.assertIn("não quero misturar os dois", examples)
+
+    def test_hackathon_external_integrations_are_read_only(self):
+        persona = normalized(PERSONA)
+        tasks = normalized(TASKS)
+        triage = normalized(TRIAGE)
+        readme = normalized(README)
+        self.assertIn("connected external sources are read-only", persona)
+        self.assertIn("external integrations are read-only", tasks)
+        self.assertIn("never perform those external effects", triage)
+        self.assertIn("does not perform the final external", readme)
+        self.assertIn("prepare it completely and leave the final action to the owner", tasks)
+        self.assertIn("never claim", tasks)
+
+    def test_read_only_mode_remains_active_and_discovery_oriented(self):
+        persona = normalized(PERSONA)
+        triage = normalized(TRIAGE)
+        for action in ("search", "inspect", "compare", "discover"):
+            self.assertIn(action, persona)
+        self.assertIn("prefer discovery over recap", triage)
+        self.assertIn("return only the few findings", triage)
+        self.assertIn("at most one adjacent capability", triage)
+
+    def test_tracking_does_not_promise_background_monitoring(self):
+        signature = normalized(TRIAGE.split("## Signature conversations", 1)[1])
+        self.assertIn("never imply a background monitor", signature)
+        self.assertIn("quando você me chamar", signature)
 
     def test_behavior_checks_require_a_fresh_hermes_session(self):
         readme = normalized(README)

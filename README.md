@@ -44,6 +44,13 @@ background, or promise follow-up while the agent is idle. No Google, browser,
 or Latch account is bundled with the image. WhatsApp, a dashboard, and a
 multi-tenant service are outside the current release.
 
+For the hackathon release, connected external integrations are observation
+sources only. Prucê can search, inspect, compare, discover, prioritize, draft
+and track work in its own state, but it does not perform the final external
+send, submission, deletion, purchase, booking, publication or account change.
+The existing operation ledger is preserved for reliability history and future
+work; it is not used to claim that external writes are enabled.
+
 ## One person, one deployment
 
 Each Prucê installation belongs to one person. It has its own Plow line,
@@ -79,15 +86,16 @@ reconciles bundled skills into the persistent home. Open loops remain in
 `/var/lib/hermes/pruce/sources.json`. There is no external database,
 task-manager framework, or Prucê API.
 
-Consequential actions use a small receipt in
+The preserved reliability design uses a small receipt in
 `/var/lib/hermes/pruce/operations.json`. Each receipt fixes one intent, action,
-target, payload hash, authorization and derived idempotency key before execution. A success,
+target, payload hash, authorization and derived idempotency key. A success,
 in-flight interruption or ambiguous result blocks another attempt until the
 actual service is reconciled; a confirmed safe failure can be retried under the
 same key. This guard does not turn local state into proof of an external effect
 and does not replace provider-side idempotency when available. It is not a
 gateway or tool-call interceptor: bypassing the workflow also bypasses this
-guard, so end-to-end enforcement remains an agent/runtime responsibility.
+guard. The hackathon build therefore preserves the ledger without treating it
+as permission to enable external writes.
 
 Hermes snapshots the composed persona and skill guidance when a conversation
 session starts. After changing those files and rebuilding, use a fresh `/new`
@@ -214,8 +222,8 @@ instructions available on that machine.
 Prucê does not ask for these integrations during a generic welcome. It offers
 one only when it can explain the immediate result and initial access scope. A
 connected read capability never implies permission to send email, submit a
-form, delete, spend, or book. Consequential actions follow the confirmation and
-approval rules supplied by the official stack.
+form, delete, spend, or book. The hackathon build keeps those external actions
+disabled even if the official stack exposes a write-capable tool.
 
 Latch installation and account connection remain manual. Start with the
 [official Latch page](https://plow.co/latch); do not send passwords, OAuth
