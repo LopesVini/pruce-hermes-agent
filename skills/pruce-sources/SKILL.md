@@ -64,6 +64,9 @@ not the transport, protocol or tool error. Say “Essa informação veio da foto
 terça e pode ter mudado”, not that a source is stale. If two records may refer
 to different things, say “Encontrei dois processos parecidos e não quero
 misturar os dois” and ask only for the fact that distinguishes them.
+Routine checks and failures should normally take one to three sentences. Report
+the useful result or unavailable source once; never narrate each attempted
+connector, fallback, permission scope or tool lookup.
 
 Only call an integration unsupported after checking the capabilities actually
 available in this version. Do not promise support merely because the owner uses

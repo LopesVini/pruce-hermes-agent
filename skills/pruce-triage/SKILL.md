@@ -95,6 +95,10 @@ scope. Do not save every candidate automatically: confirm that
 it is a real outcome the owner wants tracked, unless their request already made
 that intent clear.
 
+Keep routine coverage and failure notes to one to three sentences. Name the
+source the owner recognizes, not the connector path used to reach it, and do
+not recount multiple failed tool attempts.
+
 For “Tem alguma coisa importante que eu tô deixando passar?”, return only the
 few findings that deserve attention. Prefer discovery over recap: a deadline
 inside an email, a reply that changes the next step, a calendar conflict or a

@@ -15,7 +15,9 @@ README = (ROOT / "README.md").read_text()
 ENGINEERING_JARGON = (
     "effective_temporal", "provenance", "canonical state", "source map",
     "operation receipt", "idempotency", "waiting_for_third_party",
-    "needs_action", "mcp", "latch", "capability availability",
+    "needs_action", "mcp", "latch", "capability availability", "token scope",
+    "connector legacy", "tool registry", "dashboard authorization",
+    "faster-whisper",
 )
 
 
@@ -266,6 +268,28 @@ class ProductBehaviorTests(unittest.TestCase):
         self.assertIn("não consegui acessar seu calendário agora", examples)
         self.assertIn("pode ter mudado", examples)
         self.assertIn("não quero misturar os dois", examples)
+
+    def test_tool_failure_language_is_short_and_hides_connector_internals(self):
+        examples = normalized(marked_section(PERSONA, "tool-failure-ux"))
+        self.assertIn("não consegui acessar seu calendário agora", examples)
+        self.assertIn("conexão com seu mac parece", examples)
+        self.assertIn("posso trabalhar com a mensagem", examples)
+        for term in ENGINEERING_JARGON:
+            self.assertNotIn(term, examples)
+        persona = normalized(PERSONA)
+        self.assertIn("one to three sentences", persona)
+        self.assertIn("explicitly asks why or how", persona)
+        self.assertIn("do not list every route", persona)
+
+    def test_media_and_voice_turns_stay_natural_when_delayed(self):
+        persona = normalized(PERSONA)
+        self.assertIn("attachments and text delivered in one inbound event as one user turn", persona)
+        self.assertIn("ask at most one brief question", persona)
+        self.assertIn("successful voice transcript is the owner's original message", persona)
+        self.assertIn("as if the owner had typed it", persona)
+        self.assertIn("never announce the transcription engine", persona)
+        self.assertIn("do not reopen the old topic with a verbose reply", persona)
+        self.assertIn("brief acknowledgement that does not restart the old topic", persona)
 
     def test_hackathon_external_integrations_are_read_only(self):
         persona = normalized(PERSONA)
