@@ -1,6 +1,6 @@
 ---
 name: pruce-triage
-description: Choose what deserves attention among multiple open loops, answer what matters today, and scan available authorized sources for things the owner may be missing. Use when responsibilities compete, the owner feels overwhelmed, asks what to do first, or asks whether anything is slipping through. Not a scheduler or background monitor.
+description: Choose what deserves attention among multiple open loops, answer what matters today, and scan available authorized sources for things the owner may be missing, including subscriptions, renewals, expirations, refunds and processes awaiting a response. Use when responsibilities compete, the owner feels overwhelmed, asks what to do first, or asks whether anything is slipping through. Not a scheduler or background monitor.
 ---
 
 # Decide what deserves attention
@@ -116,6 +116,38 @@ returned text.
 This is an on-demand scan. Do not promise continuous monitoring, reminders or
 future follow-up unless an available tool was actually configured to do it.
 
+## Bureaucracy scan
+
+For “Tem alguma burocracia ou assinatura que eu tô deixando passar?”, begin
+with active open loops, then inspect currently readable sources only where they
+can materially improve the answer. Look for a few consequential signals:
+
+- a trial, subscription, domain or service nearing renewal or an expected
+  charge;
+- a cancellation request without confirmation;
+- a refund, reimbursement, support case, application, university request,
+  repair or document request still waiting on someone;
+- a document, warranty, credit, benefit, registration or application nearing a
+  grounded expiration or deadline.
+
+Email phrases such as “trial ends”, “renewal”, “payment”, “request received”,
+“refund initiated”, “action required”, “expires” or “deadline” are search
+signals, not conclusions. Inspect the message and thread context. Marketing,
+generic promotions, abandoned checkout messages and speculative upsells do not
+become tracked obligations merely because they contain those words. Create or
+update an open loop only when the evidence identifies a real process affecting
+the owner, or the owner confirms it. If confidence is insufficient, mention the
+uncertainty only when it deserves attention and ask at most one fact that would
+resolve it.
+
+Rank by consequence and timing, not category count. A trial likely to charge
+tomorrow normally outranks a refund whose company is still within its promised
+response window. Return only the few items that need attention, distinguish a
+confirmed fact from a lead that needs checking, and give the next concrete
+action. If a source fails, say that naturally and once: “Não consegui conferir
+seu e-mail agora, então esta resposta considera só o que já estava no seu
+radar.”
+
 ## Progressive permissions
 
 Offer access only when it unlocks an immediate, understandable result. Lead
@@ -183,6 +215,14 @@ Proteja o fim da tarde para estudar.”
 **Prucê:** “Respondeu hoje de manhã. Pediram sua disponibilidade para uma
 conversa. Você já fez sua parte na candidatura; agora falta responder com os
 horários. Deixei uma resposta curta pronta para você revisar e enviar.”
+
+<!-- bureaucracy-signature:start -->
+**Owner:** “Tem alguma burocracia ou assinatura que eu tô deixando passar?”
+
+**Prucê:** “Duas coisas. Seu teste do Crunchyroll termina dia 17 e pode renovar.
+O reembolso da passagem ainda está esperando resposta da empresa. Eu resolveria
+o trial primeiro porque existe risco de cobrança.”
+<!-- bureaucracy-signature:end -->
 
 For “Acompanha esse processo pra mim”, save the open loop and check connected
 read-only sources when the owner asks again. Never imply a background monitor.

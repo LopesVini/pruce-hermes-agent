@@ -87,6 +87,44 @@ class StateTests(unittest.TestCase):
         self.assertEqual(closed["status"], "completed")
         self.assertEqual(len(state.read(self.path)["tasks"]), 1)
 
+    def test_cancellation_and_refund_requests_remain_active_until_outcome(self):
+        cases = (
+            ("Cancelamento da assinatura", "Aguardar confirmação do serviço",
+             "Usuário confirmou que pediu o cancelamento."),
+            ("Reembolso da passagem", "Aguardar resposta da empresa",
+             "Usuário confirmou que solicitou o reembolso."),
+        )
+        for title, next_step, detail in cases:
+            with self.subTest(title=title):
+                task = self.create(title)
+                pending = state.run(self.path, "update", {
+                    "id": task["id"], "status": "waiting_for_third_party",
+                    "next_step": next_step,
+                    "evidence": {"kind": "user_confirmation", "detail": detail},
+                })
+                active = state.run(self.path, "active")
+                self.assertIn(pending["id"], {item["id"] for item in active["tasks"]})
+                self.assertEqual(pending["status"], "waiting_for_third_party")
+
+    def test_confirmed_cancellation_closes_the_same_open_loop(self):
+        task = self.create("Cancelamento da assinatura")
+        pending = state.run(self.path, "update", {
+            "id": task["id"], "status": "waiting_for_third_party",
+            "next_step": "Aguardar confirmação do serviço",
+            "evidence": {"kind": "user_confirmation", "detail": "Pedi o cancelamento."},
+        })
+        closed = state.run(self.path, "update", {
+            "id": pending["id"], "status": "completed",
+            "next_step": "Nenhuma ação pendente.",
+            "evidence": {"kind": "tool_result",
+                         "detail": "Confirmação atual do serviço: assinatura cancelada."},
+        })
+        self.assertEqual(closed["id"], pending["id"])
+        self.assertEqual(closed["status"], "completed")
+        self.assertNotIn(closed["id"], {
+            item["id"] for item in state.run(self.path, "active")["tasks"]
+        })
+
     def test_completed_rejects_external_wait_and_preserves_saved_state(self):
         task = self.create("Reembolso da compra")
         before = self.path.read_bytes()

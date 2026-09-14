@@ -1,6 +1,6 @@
 ---
 name: pruce-tasks
-description: Check current task status, completion, active loops, waits, deadline or temporal reliability in the owner's solo DM. Also capture, resume and advance study, applications, paperwork and everyday open loops. Pure historical recall alone does not require a state read.
+description: Check current task status, completion, active loops, waits, deadline or temporal reliability in the owner's solo DM. Also capture, resume and advance study, applications, subscriptions, refunds, paperwork and other everyday open loops. Pure historical recall alone does not require a state read.
 ---
 
 # One open loop, one useful next step
@@ -96,6 +96,38 @@ stays open after sending the CV if a response is awaited. If the request was onl
 producing and verifying that draft can complete that narrower task. Never
 silently shrink the agreed outcome to make it look completed. If the user asks
 to reopen a closed subject, update the same ID and explain the correction.
+
+## Bureaucracy and adulting loops
+
+Use the same task record for subscriptions, trials, renewals, refunds, support
+cases, applications, document requests, registrations, warranties and expiring
+benefits. Do not add a parallel process record. The existing fields carry the
+needed meaning:
+
+- `title` names the real-world outcome or continuing subject, such as
+  “Cancelamento da assinatura” or “Reembolso da compra”, not merely “Enviar
+  pedido”.
+- `status` and `next_step` together show who has the ball. If the owner must
+  act, say what they must do. If a real request was sent, keep the loop waiting
+  and name the company, institution or person whose response is needed.
+- `temporal` holds the next relevant date when it is grounded: trial end,
+  renewal, expected charge, expiration or application deadline.
+- `evidence` supports the current wait or final closure. It is not a free-form
+  archive and must not contain a whole email or document.
+
+An action is not the result. “Pedi o cancelamento” means the cancellation loop
+is waiting for confirmation, not completed. “Solicitei o reembolso” means the
+refund is waiting for the company or payment provider, not received. “Enviei a
+candidatura” means the selection process remains open unless its final outcome
+is known. Update the existing record as the ball changes hands; do not create a
+new task for every message in the same process.
+
+Close only when current evidence supports the outcome named by the title: for
+example, an authoritative confirmation that the subscription is cancelled, the
+refund arrived, the requested document was issued, or the process ended. A
+receipt that merely says “we received your request” supports a third-party wait,
+not closure. Explicitly stopping tracking may also close the loop, but describe
+that as the owner's choice rather than a successful result.
 
 ## Small state interface
 

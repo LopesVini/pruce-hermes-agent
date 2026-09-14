@@ -256,11 +256,56 @@ class ProductBehaviorTests(unittest.TestCase):
         self.assertIn("A matrícula primeiro", signature)
         self.assertIn("Você já fez sua parte", signature)
         replies = re.findall(r"\*\*Prucê:\*\* “(.*?)”", signature, re.DOTALL)
-        self.assertEqual(len(replies), 3)
+        self.assertEqual(len(replies), 4)
         for reply in replies:
             self.assertLessEqual(len(normalized(reply).split()), 45)
         for term in ENGINEERING_JARGON + ("score", "matrix"):
             self.assertNotIn(term, normalized(signature))
+
+    def test_bureaucracy_actions_do_not_falsely_close_real_outcomes(self):
+        tasks = normalized(TASKS)
+        self.assertIn("“pedi o cancelamento” means the cancellation loop is waiting", tasks)
+        self.assertIn("“solicitei o reembolso” means the refund is waiting", tasks)
+        self.assertIn("“enviei a candidatura” means the selection process remains open", tasks)
+        self.assertIn("supports a third-party wait, not closure", tasks)
+
+    def test_bureaucracy_reuses_the_existing_open_loop_model(self):
+        tasks = normalized(TASKS)
+        self.assertIn("do not add a parallel process record", tasks)
+        for field in ("`title`", "`status`", "`next_step`", "`temporal`", "`evidence`"):
+            self.assertIn(field, TASKS)
+        self.assertIn("update the existing record as the ball changes hands", tasks)
+
+    def test_bureaucracy_scan_surfaces_grounded_renewals_and_waits(self):
+        triage = normalized(TRIAGE)
+        self.assertIn("trial, subscription, domain or service nearing renewal", triage)
+        self.assertIn("cancellation request without confirmation", triage)
+        self.assertIn("still waiting on someone", triage)
+        self.assertIn("grounded expiration or deadline", triage)
+        self.assertIn("trial likely to charge tomorrow", triage)
+
+    def test_marketing_email_is_not_automatically_an_obligation(self):
+        triage = normalized(TRIAGE)
+        self.assertIn("search signals, not conclusions", triage)
+        self.assertIn("marketing, generic promotions, abandoned checkout messages", triage)
+        self.assertIn("do not become tracked obligations", triage)
+        self.assertIn("evidence identifies a real process affecting the owner", triage)
+
+    def test_bureaucracy_signature_is_concise_and_hides_internals(self):
+        signature = marked_section(TRIAGE, "bureaucracy-signature")
+        reply = re.search(r"\*\*Prucê:\*\* “(.*?)”", signature, re.DOTALL).group(1)
+        self.assertLessEqual(len(normalized(reply).split()), 45)
+        self.assertIn("pode renovar", normalized(reply))
+        self.assertIn("ainda está esperando resposta", normalized(reply))
+        self.assertIn("risco de cobrança", normalized(reply))
+        for term in ENGINEERING_JARGON:
+            self.assertNotIn(term, normalized(reply))
+
+    def test_bureaucracy_source_failure_is_natural_and_write_policy_stays_read_only(self):
+        triage = normalized(TRIAGE)
+        self.assertIn("não consegui conferir seu e-mail agora", triage)
+        self.assertIn("esta resposta considera só", triage)
+        self.assertIn("never perform those external effects", triage)
 
     def test_uncertainty_and_tool_failures_sound_natural(self):
         examples = normalized(marked_section(PERSONA, "normal-ux-examples"))
