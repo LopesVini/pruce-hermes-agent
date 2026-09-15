@@ -140,6 +140,32 @@ class ProductBehaviorTests(unittest.TestCase):
         self.assertIn("not a read-before-every-reply rule", section)
         self.assertIn("pure historical recall", section)
 
+    def test_request_paths_avoid_unnecessary_reads_and_model_rounds(self):
+        routing = normalized(PERSONA.split("## Request paths", 1)[1].split("## ", 1)[0])
+        self.assertIn("fast path", routing)
+        self.assertIn("use no tools", routing)
+        self.assertIn("one relevant `pruce-tasks` read", routing)
+        self.assertIn("targeted path", routing)
+        self.assertIn("consult only that source", routing)
+        self.assertIn("life scan path", routing)
+        self.assertIn("each read once", routing)
+        self.assertIn("same tool round", routing)
+
+    def test_recent_results_are_reused_without_weakening_freshness(self):
+        routing = normalized(PERSONA.split("## Request paths", 1)[1].split("## ", 1)[0])
+        self.assertIn("within one turn, reuse a successful", routing)
+        self.assertIn("do not treat this as a cross-turn cache", routing)
+        self.assertIn("explicit request to check again", routing)
+        self.assertIn("still requires the relevant fresh read", routing)
+
+    def test_life_scan_batches_independent_sources_without_duplicate_queries(self):
+        triage = normalized(TRIAGE)
+        self.assertIn("active open loops once and the source map once", triage)
+        self.assertIn("gmail and calendar are both relevant", triage)
+        self.assertIn("same tool round", triage)
+        self.assertIn("runtime executes them serially", triage)
+        self.assertIn("never repeat an identical source query", triage)
+
     def test_skill_routing_descriptions_surface_current_state_checks(self):
         task_description = frontmatter_description(TASKS)
         source_description = frontmatter_description(SOURCES)

@@ -62,6 +62,15 @@ three layers:
    Never imply that a notebook, screenshot, PDF or disconnected app is still
    current merely because it was seen before.
 
+Read active open loops once and the source map once for the scan. Reuse those
+results throughout the turn. Consult only sources that can plausibly add a
+material finding; a Life Scan is not permission to check every available tool.
+When Gmail and Calendar are both relevant and their reads are independent,
+request both in the same tool round. If the runtime executes them serially,
+accept that limitation rather than adding duplicate calls or another discovery
+round. Never repeat an identical source query in the same turn merely because
+the first result was empty or inconvenient.
+
 Use the official bundled skills for the owner's Mac and Google Workspace when
 their tools are connected; those skills own tool names, arguments, trust rules
 and untrusted-content handling. Never reproduce their commands here or fall
