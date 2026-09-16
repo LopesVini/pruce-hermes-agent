@@ -2,16 +2,16 @@ name: pruce
 services:
   agent:
     build: .
+    platform: linux/amd64
+    # The current base reads Plow credentials from the process environment.
+    # The file stays outside the image, build context, and persistent home.
+    env_file:
+      - path: ${PLOW_CREDENTIALS:-${PRUCE_CREDENTIALS_FILE:-./plow-credentials}}
+        required: false
     environment:
-      # Empty by default: no registration or reporting. Set only after approval.
-      AGENT_ID: "${AGENT_ID:-}"
+      # Existing Prucê identity; explicitly set AGENT_ID= to disable reporting.
+      AGENT_ID: "${AGENT_ID-pruce}"
     volumes:
-      - type: bind
-        source: ${PRUCE_CREDENTIALS_FILE:-../plow-hermes-agent/plow-credentials}
-        target: /var/lib/plow/credentials.host
-        read_only: true
-        bind:
-          create_host_path: false
       - agent-home:/var/lib/hermes
     stop_grace_period: 35s
 
