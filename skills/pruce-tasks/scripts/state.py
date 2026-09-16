@@ -26,6 +26,12 @@ TRUSTED_CAPTURE_BASES = {"original_message_timestamp", "live_runtime_clock_at_ca
 LEGACY_CAPTURE_BASES = {"message_timestamp", "runtime_clock"}
 CAPTURE_BASES = TRUSTED_CAPTURE_BASES | LEGACY_CAPTURE_BASES | {"unknown"}
 DAY_PARTS = {"morning", "afternoon", "evening", "night"}
+PROFILE_STATUSES = {"pending", "known", "skipped"}
+TIMEZONE_PROFILE_STATUSES = PROFILE_STATUSES | {"unknown"}
+RADAR_PREFERENCES = {
+    "pending", "university_deadlines", "important_replies",
+    "adulting_bureaucracy", "skipped",
+}
 WEEKDAYS = {
     "segunda": 0, "segunda-feira": 0, "terca": 1, "terca-feira": 1,
     "quarta": 2, "quarta-feira": 2, "quinta": 3, "quinta-feira": 3,
@@ -163,10 +169,105 @@ def validate_task(task):
             "this status requires evidence or user confirmation")
 
 
+def default_profile():
+    return {
+        "preferred_name": {"status": "pending", "value": None},
+        "timezone": {"status": "pending", "value": None, "city": None},
+        "university": {"status": "pending", "value": None},
+        "course": {"status": "pending", "value": None},
+        "primary_radar_preference": "pending",
+    }
+
+
+def legacy_profile():
+    profile = default_profile()
+    for name in ("preferred_name", "university", "course"):
+        profile[name] = {"status": "skipped", "value": None}
+    profile["timezone"] = {"status": "skipped", "value": None, "city": None}
+    profile["primary_radar_preference"] = "skipped"
+    return profile
+
+
+def validate_profile_value(value, name):
+    keys(value, {"status", "value"}, {"status", "value"})
+    require(value["status"] in PROFILE_STATUSES, f"invalid {name} status")
+    if value["status"] == "known":
+        text(value["value"], name, 300)
+    else:
+        require(value["value"] is None, f"{name} value requires known status")
+
+
+def validate_profile(profile):
+    fields = {"preferred_name", "timezone", "university", "course",
+              "primary_radar_preference"}
+    keys(profile, fields, fields)
+    validate_profile_value(profile["preferred_name"], "preferred_name")
+    validate_profile_value(profile["university"], "university")
+    validate_profile_value(profile["course"], "course")
+
+    timezone_profile = profile["timezone"]
+    keys(timezone_profile, {"status", "value", "city"},
+         {"status", "value", "city"})
+    require(timezone_profile["status"] in TIMEZONE_PROFILE_STATUSES,
+            "invalid timezone profile status")
+    if timezone_profile["status"] == "known":
+        timezone(timezone_profile["value"])
+    else:
+        require(timezone_profile["value"] is None,
+                "timezone value requires known status")
+    if timezone_profile["city"] is not None:
+        text(timezone_profile["city"], "city", 300)
+        require(timezone_profile["status"] in {"known", "unknown"},
+                "city requires known or unknown timezone status")
+    require(profile["primary_radar_preference"] in RADAR_PREFERENCES,
+            "invalid primary radar preference")
+
+
+def validate_profile_patch(profile):
+    fields = {"preferred_name", "timezone", "university", "course",
+              "primary_radar_preference"}
+    keys(profile, fields)
+    for name in ("preferred_name", "university", "course"):
+        if name in profile:
+            validate_profile_value(profile[name], name)
+    if "timezone" in profile:
+        candidate = default_profile()
+        candidate["timezone"] = profile["timezone"]
+        validate_profile(candidate)
+    if "primary_radar_preference" in profile:
+        require(profile["primary_radar_preference"] in RADAR_PREFERENCES,
+                "invalid primary radar preference")
+
+
+def effective_profile(state):
+    if "profile" in state:
+        return copy.deepcopy(state["profile"])
+    return legacy_profile() if state["introduced"] else default_profile()
+
+
+def onboarding_status(state, profile=None):
+    profile = effective_profile(state) if profile is None else profile
+    legacy = state["introduced"] and "profile" not in state
+    remaining = [
+        name for name in ("preferred_name", "timezone", "university", "course")
+        if profile[name]["status"] == "pending"
+    ]
+    if profile["primary_radar_preference"] == "pending":
+        remaining.append("primary_radar_preference")
+    return {
+        "complete": bool(legacy or (state["introduced"] and not remaining)),
+        "legacy": bool(legacy),
+        "remaining": [] if legacy else remaining,
+    }
+
+
 def validate(state):
-    keys(state, {"introduced", "context", "tasks"}, {"introduced", "context", "tasks"})
+    keys(state, {"introduced", "context", "profile", "tasks"},
+         {"introduced", "context", "tasks"})
     require(type(state["introduced"]) is bool, "introduced must be boolean")
     text(state["context"], "context", 4000, empty=True)
+    if "profile" in state:
+        validate_profile(state["profile"])
     require(isinstance(state["tasks"], list), "tasks must be a list")
     ids = set()
     for task in state["tasks"]:
@@ -357,7 +458,14 @@ def operational_task(task):
 
 
 def operational_state(state, active_only=False):
-    view = {"introduced": state["introduced"], "context": state["context"], "tasks": []}
+    profile = effective_profile(state)
+    view = {
+        "introduced": state["introduced"],
+        "context": state["context"],
+        "profile": profile,
+        "onboarding": onboarding_status(state, profile),
+        "tasks": [],
+    }
     for task in state["tasks"]:
         if not active_only or task["status"] != "completed":
             view["tasks"].append(operational_task(task))
@@ -396,10 +504,27 @@ def read(path):
 
 def apply(state, command, data):
     if command == "profile":
-        keys(data, {"introduced", "context"})
+        keys(data, {"introduced", "context", "profile"})
         require(bool(data), "empty update")
-        state.update(data)
-        result = {"introduced": state["introduced"], "context": state["context"]}
+        legacy_before_update = state["introduced"] and "profile" not in state
+        if "introduced" in data:
+            state["introduced"] = data["introduced"]
+        if "context" in data:
+            state["context"] = data["context"]
+        if "profile" in data:
+            validate_profile_patch(data["profile"])
+            profile = (legacy_profile() if legacy_before_update else
+                       copy.deepcopy(state.get("profile", default_profile())))
+            profile.update(copy.deepcopy(data["profile"]))
+            validate_profile(profile)
+            state["profile"] = profile
+        profile = effective_profile(state)
+        result = {
+            "introduced": state["introduced"],
+            "context": state["context"],
+            "profile": profile,
+            "onboarding": onboarding_status(state, profile),
+        }
     elif command == "create":
         keys(data, {"title", "next_step", "status", "due", "temporal"}, {"title", "next_step"})
         if "temporal" in data and data["temporal"] is not None:

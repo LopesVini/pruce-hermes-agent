@@ -81,9 +81,8 @@ across restart. The fixture does not implement the live chat API: adapters
 receive expected 404s, so this is bootstrap/persistence evidence, not a live
 messaging or private-cloud provisioning test. The owner container was untouched.
 
-The task began with uncommitted product and deployment work. This task's commit
-contains only Compose and this deployment note; the tests/build exercised the
-current working tree, including those pre-existing changes. Before submitting a
-revision to Plow, the owner must also commit that existing work deliberately so
-the submitted revision reproduces the tested image. Do not submit this task's
-commit alone as if it contained the full tested working tree.
+The initial deployment commit contained only Compose and this note. The final
+release also commits the existing product, packaging and test files unchanged
+in behavior, so a clean checkout contains the complete tested version. Local
+credentials and runtime data are not part of that revision. Final validation
+runs from an exported committed tree, independently of the developer checkout.

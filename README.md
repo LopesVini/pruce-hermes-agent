@@ -66,13 +66,15 @@ person breaks the privacy model and is unsupported.
 
 ## Architecture
 
-Prucê is a small variant of the official Plow Hermes image:
+Prucê is a small variant of the official Plow Hermes image. The Dockerfile pins
+the cloud-compatible base validated for this release; that base also pins its compatible
+`hermes-plugin-plow` version:
 
 - `runtime/persona.md` adds the product identity and behavioral rules;
-- `pruce-onboarding` learns context while helping;
+- `pruce-onboarding` resumes a bounded structured first run while helping;
 - `pruce-tasks` owns the small validated JSON open-loop record;
-- a separate operation ledger refuses blind replay inside its workflow after
-  success, interruption, or ambiguous results;
+- `pruce-operations` keeps inactive receipt/retry instructions out of ordinary
+  task turns while preserving the separate ledger and its replay blocks;
 - `pruce-sources` keeps a separate source and coverage map;
 - `pruce-triage` handles prioritization, life scans, progressive permissions,
   and capability discovery;
@@ -81,7 +83,8 @@ Prucê is a small variant of the official Plow Hermes image:
   an s6 service when enabled.
 
 The base image composes its `SOUL.md` with Prucê's persona on every boot and
-reconciles bundled skills into the persistent home. Open loops remain in
+reconciles bundled skills into the persistent home. The backward-compatible
+structured first-run profile and open loops remain in
 `/var/lib/hermes/pruce/state.json`; source metadata lives separately in
 `/var/lib/hermes/pruce/sources.json`. There is no external database,
 task-manager framework, or Prucê API.
@@ -174,16 +177,16 @@ plow-agents mint ln_xxx
 chmod 600 plow-credentials
 ```
 
-Create `.env` in this repository:
+Optional `.env` overrides in this repository:
 
 ```dotenv
-PRUCE_CREDENTIALS_FILE=./plow-credentials
-AGENT_ID=
+PLOW_CREDENTIALS=./plow-credentials
+AGENT_ID=pruce
 ```
 
-An empty `AGENT_ID` disables Agent Index registration and reporting. If you
-want this installation counted for the already registered Prucê agent and
-accept the reporting described below, set `AGENT_ID=pruce` before first boot.
+Compose defaults to the already registered `AGENT_ID=pruce`. An explicitly
+empty `AGENT_ID` disables Agent Index registration and reporting. The private
+credential file defaults to `./plow-credentials`; no `.env` is required.
 
 Start the agent:
 
@@ -199,10 +202,13 @@ future starts. `docker compose restart agent` preserves the named volume and
 the owner's open loops. Do not run two gateways with the same line or home, and
 do not use `docker compose down -v` unless you intend to erase local memory.
 
-The Compose file retains a legacy default credential path for the original
-development layout. Setting `PRUCE_CREDENTIALS_FILE=./plow-credentials` as
-shown above makes a clean installation independent of that layout. The private
-file is mounted read-only and excluded from Git and the Docker build context.
+The Compose file reads the private credential file into the container
+environment, which is the current base image's credential contract. The
+`PLOW_CREDENTIALS` override and legacy `PRUCE_CREDENTIALS_FILE` override support
+other locations without depending on the original development layout. The file remains
+excluded from Git and the Docker build context and is not mounted into the
+agent's persistent home. Cloud provisioning injects its own environment and
+does not use this local file; see [Cloud deployment](docs/CLOUD_DEPLOY.md).
 
 ## Optional connected capabilities
 
@@ -255,9 +261,30 @@ s6 service does not invoke the client.
 Run the state, source-map, and prompt-contract tests locally:
 
 ```sh
-python3 -B -m unittest tests.test_state tests.test_sources tests.test_operations tests.test_product_behavior -v
+python3 -B -m unittest tests.test_first_run tests.test_state tests.test_sources tests.test_operations tests.test_product_behavior -v
 AGENT_ID= docker compose config --quiet
 ```
+
+`tests.test_first_run` rehearses the complete first run under a temporary
+Hermes-like directory. It never reads or writes the active Docker volume.
+
+For a targeted Calendar latency check, use a fresh `/new` session and inspect
+timestamped container logs only after the reply. Keep the measurement internal:
+separate the initial model interval, Google skill/tool selection, the single MCP
+call and its Latch/Google return, and the final model interval. A reconnect or
+retry line belongs to the MCP interval. Never include these diagnostics in the
+normal user response. The product contract for this path is one bounded
+Calendar read with no task/source-map/Gmail detour.
+
+```sh
+docker compose logs --timestamps --since 10m agent \
+  | rg 'API call #|tool .* (completed|failed)|MCP|mcp|reconnect|plow'
+```
+
+The current Hermes base logs each model API call's latency and each tool's
+duration. Docker timestamps bracket selection/dispatch and relay reconnects, so
+the trace distinguishes the two model intervals from the MCP/Latch interval
+without adding timing text to Prucê's reply.
 
 Validate the exact client installed in the image without credentials, real
 volumes, or network access during the test run:

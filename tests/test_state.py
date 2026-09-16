@@ -40,9 +40,94 @@ class StateTests(unittest.TestCase):
             })
 
     def test_fresh_read_creates_nothing(self):
-        self.assertEqual(state.run(self.path, "read"),
-                         {"introduced": False, "context": "", "tasks": []})
+        fresh = state.run(self.path, "read")
+        self.assertFalse(fresh["introduced"])
+        self.assertEqual(fresh["context"], "")
+        self.assertEqual(fresh["tasks"], [])
+        self.assertEqual(fresh["profile"], state.default_profile())
+        self.assertFalse(fresh["onboarding"]["complete"])
+        self.assertFalse(fresh["onboarding"]["legacy"])
         self.assertFalse(self.path.parent.exists())
+
+    def test_new_profile_is_structured_resumable_and_preserves_context(self):
+        first = state.run(self.path, "profile", {
+            "introduced": True,
+            "context": "Prefere respostas curtas.",
+            "profile": {
+                "preferred_name": {"status": "known", "value": "Bia"},
+            },
+        })
+        self.assertFalse(first["onboarding"]["complete"])
+        self.assertEqual(first["onboarding"]["remaining"], [
+            "timezone", "university", "course", "primary_radar_preference",
+        ])
+
+        resumed = state.run(self.path, "profile", {"profile": {
+            "timezone": {"status": "known", "value": "America/Sao_Paulo",
+                         "city": "Belo Horizonte"},
+            "university": {"status": "known", "value": "UFMG"},
+            "course": {"status": "skipped", "value": None},
+        }})
+        self.assertFalse(resumed["onboarding"]["complete"])
+        self.assertEqual(resumed["context"], "Prefere respostas curtas.")
+        self.assertEqual(resumed["profile"]["preferred_name"]["value"], "Bia")
+
+        completed = state.run(self.path, "profile", {"profile": {
+            "primary_radar_preference": "university_deadlines",
+        }})
+        self.assertTrue(completed["onboarding"]["complete"])
+        self.assertEqual(completed["onboarding"]["remaining"], [])
+        self.assertEqual(state.read(self.path)["context"], "Prefere respostas curtas.")
+
+    def test_existing_introduced_user_without_profile_stays_complete_and_unmodified(self):
+        legacy = {"introduced": True, "context": "Estuda engenharia.", "tasks": []}
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(json.dumps(legacy))
+        before = self.path.read_bytes()
+
+        current = state.run(self.path, "read")
+
+        self.assertTrue(current["onboarding"]["complete"])
+        self.assertTrue(current["onboarding"]["legacy"])
+        self.assertEqual(current["profile"], state.legacy_profile())
+        self.assertEqual(self.path.read_bytes(), before)
+
+        updated = state.run(self.path, "profile", {"profile": {
+            "primary_radar_preference": "important_replies",
+        }})
+        self.assertTrue(updated["onboarding"]["complete"])
+        self.assertEqual(updated["profile"]["preferred_name"]["status"], "skipped")
+        self.assertEqual(updated["profile"]["primary_radar_preference"],
+                         "important_replies")
+
+    def test_sources_are_not_part_of_profile_completion(self):
+        completed = state.run(self.path, "profile", {
+            "introduced": True,
+            "profile": {
+                "preferred_name": {"status": "skipped", "value": None},
+                "timezone": {"status": "unknown", "value": None,
+                             "city": "Cidade não confirmada"},
+                "university": {"status": "skipped", "value": None},
+                "course": {"status": "skipped", "value": None},
+                "primary_radar_preference": "skipped",
+            },
+        })
+        self.assertTrue(completed["onboarding"]["complete"])
+        self.assertNotIn("sources", completed["onboarding"])
+
+    def test_invalid_structured_profile_preserves_existing_state(self):
+        state.run(self.path, "profile", {"introduced": True, "profile": {}})
+        before = self.path.read_bytes()
+        invalid = (
+            {"preferred_name": {"status": "known", "value": None}},
+            {"timezone": {"status": "known", "value": "Mars/Olympus", "city": None}},
+            {"university": {"status": "skipped", "value": "UFMG"}},
+            {"primary_radar_preference": "everything"},
+        )
+        for profile in invalid:
+            with self.subTest(profile=profile), self.assertRaises(ValueError):
+                state.run(self.path, "profile", {"profile": profile})
+            self.assertEqual(self.path.read_bytes(), before)
 
     def test_profile_and_task_survive_new_process(self):
         state.run(self.path, "profile", {"introduced": True, "context": "Estuda engenharia."})
