@@ -115,6 +115,24 @@ class NativeSubscriptionTests(unittest.TestCase):
         result = self.subscribe(ru='RU I', days='weekdays')
         self.assertEqual(self.jobs.get_job(result['job_id'])['schedule']['expr'], '0 14 * * 1,2,3,4,5')
 
+    def test_whatsapp_once_captures_origin_without_home_fallback(self):
+        from gateway.session_context import set_session_vars, clear_session_vars
+        jid = '5511999999999@s.whatsapp.net'
+        recurring = self.subscribe()
+        tokens = set_session_vars(platform='whatsapp', chat_id=jid, chat_type='dm', user_id=jid)
+        try:
+            result = self.manage(action='send_once', opt_in=True, ru='RU II', delay_minutes=5)
+        finally:
+            clear_session_vars(tokens)
+        job = self.jobs.get_job(result['job_id'])
+        self.assertEqual(job['deliver'], 'whatsapp:' + jid)
+        self.assertEqual(job['origin']['platform'], 'whatsapp')
+        self.assertEqual(job['origin']['chat_id'], jid)
+        self.assertEqual(job['repeat']['times'], 1)
+        self.assertTrue(job['no_agent'])
+        self.assertEqual(job['failure_deliver'], 'local')
+        self.assertEqual(self.jobs.get_job(recurring['job_id'])['deliver'], 'imessage:synthetic-owner')
+
     def test_idempotent_request_and_change_ru_keeps_one_job_and_delivery(self):
         first = self.subscribe()
         second = self.subscribe()

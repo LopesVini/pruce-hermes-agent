@@ -212,6 +212,11 @@ does not use this local file; see [Cloud deployment](docs/CLOUD_DEPLOY.md).
 
 ## Optional connected capabilities
 
+Direct Google on Linux/cloud was audited separately: see
+[Google Workspace direct audit](docs/GOOGLE_WORKSPACE_DIRECT_AUDIT.md).
+The native scripts remain in the image, but a hosted user authorization flow
+is not enabled in this release.
+
 The official stack reaches the owner's Mac through **Plow Latch**. When Latch
 is configured and the Mac is awake, its MCP relay publishes the tools and
 instructions available on that machine.
@@ -315,3 +320,7 @@ upstream licenses and notices.
 - [Plow Hermes base](https://github.com/plow-pbc/plow-hermes-agent)
 - [Official Agent Index client pin](https://github.com/plow-pbc/agent-index-client/tree/87901f8b182a8a7c65ee3dd7267f8f835ee2a545)
 - [Official Life Assistant variant](https://github.com/plow-pbc/life-assistant-hermes-agent)
+
+## WhatsApp
+
+Preparação, pairing e reversão: [docs/WHATSAPP.md](docs/WHATSAPP.md).

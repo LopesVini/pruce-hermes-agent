@@ -1,5 +1,6 @@
 /plow-credentials
 /.env
+/whatsapp.env
 /.env.*
 __pycache__/
 *.pyc

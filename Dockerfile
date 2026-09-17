@@ -2,6 +2,20 @@
 # hermes-plugin-plow at 8e055e059ce774b455869d915525e63933db18fe.
 FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-80ef5024eb4b770e727a618a9b55421c73da6228@sha256:864771e8165db16c11a55635df85696f39d91020f258576dd62b7cab0515514f
 
+# Cloud deploy runs the image directly, without the local Compose environment.
+ENV AGENT_ID=pruce
+
+# Official Hermes bridge, installed from its shipped lockfile; no custom adapter.
+RUN cd /opt/hermes/scripts/whatsapp-bridge \
+ && npm ci --omit=dev --no-audit --no-fund \
+ && /opt/hermes/.venv/bin/python3 -c 'import hashlib,pathlib; p=pathlib.Path("."); (p/"node_modules/.hermes-pkg-hash").write_text(hashlib.sha256((p/"package.json").read_bytes()).hexdigest()[:16])'
+ENV WHATSAPP_ENABLED=false WHATSAPP_MODE=bot \
+    WHATSAPP_ALLOW_ALL_USERS=false WHATSAPP_DM_POLICY=allowlist \
+    WHATSAPP_GROUP_POLICY=disabled WHATSAPP_ALLOWED_USERS="" \
+    WHATSAPP_FORWARD_OWNER_MESSAGES=false WHATSAPP_DEBUG=false
+COPY --chmod=0644 image/whatsapp_init.py /opt/plow/whatsapp-init.py
+COPY --chmod=0755 image/whatsapp_pair.sh /usr/local/bin/pruce-whatsapp-pair
+
 # Omit native cron headers only for authenticated Prucê RU delivery records.
 COPY --chmod=0644 image/patch_ru_delivery.py /opt/plow/patch-ru-delivery.py
 RUN /opt/hermes/.venv/bin/python3 -B /opt/plow/patch-ru-delivery.py

@@ -4,12 +4,15 @@ Build first: docker build --platform linux/amd64 -t pruce-index-check:local .
 Run: python3 -B tests/run_in_image.py
 """
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = (
+    "tests/test_google_workspace.py",
+    "tests/test_whatsapp.py", "image/whatsapp_init.py", "whatsapp.env.example",
     "tests/test_ru_delivery.py", "image/patch_ru_delivery.py",
     "tests/test_ru_request.py", "skills/pruce-ru/scripts/request.py",
     "tests/test_ru_subscription.py", "skills/pruce-ru/scripts/subscription.py",
@@ -34,7 +37,7 @@ FILES = (
 RUN = ["docker", "run", "--rm", "--platform", "linux/amd64", "--network", "none",
        "--read-only", "--tmpfs", "/tmp:exec", "--tmpfs", "/var/lib/hermes",
        "--tmpfs", "/opt/data", "--env", "HOME=/tmp", "--env", "HERMES_HOME=/var/lib/hermes"]
-PYTHON = ["--entrypoint", "/opt/hermes/.venv/bin/python3", "pruce-index-check:local"]
+PYTHON = ["--entrypoint", "/opt/hermes/.venv/bin/python3", os.environ.get("PRUCE_TEST_IMAGE", "pruce-index-check:local")]
 
 
 def main():

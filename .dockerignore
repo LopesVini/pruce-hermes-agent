@@ -32,6 +32,8 @@
 !vendor/client.pin
 !image/
 !image/patch_ru_delivery.py
+!image/whatsapp_init.py
+!image/whatsapp_pair.sh
 !image/s6-overlay/
 !image/s6-overlay/**
 !LICENSE

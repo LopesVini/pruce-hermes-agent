@@ -11,6 +11,15 @@ services:
     environment:
       # Existing Prucê identity; explicitly set AGENT_ID= to disable reporting.
       AGENT_ID: "${AGENT_ID-pruce}"
+      WHATSAPP_ENABLED: "${WHATSAPP_ENABLED:-false}"
+      WHATSAPP_MODE: bot
+      WHATSAPP_ALLOW_ALL_USERS: "false"
+      WHATSAPP_DM_POLICY: allowlist
+      WHATSAPP_GROUP_POLICY: disabled
+      WHATSAPP_ALLOWED_USERS: "${WHATSAPP_ALLOWED_USERS:-}"
+      WHATSAPP_HOME_CHANNEL: "${WHATSAPP_HOME_CHANNEL:-}"
+      WHATSAPP_FORWARD_OWNER_MESSAGES: "false"
+      WHATSAPP_DEBUG: "false"
     volumes:
       - agent-home:/var/lib/hermes
     stop_grace_period: 35s

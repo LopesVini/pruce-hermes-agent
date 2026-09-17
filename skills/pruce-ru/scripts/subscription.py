@@ -155,7 +155,11 @@ def manage(data, home=None, runtime=None):
             destination = f"{origin['platform']}:{origin['chat_id']}"
             if origin.get("thread_id"):
                 destination += ":" + str(origin["thread_id"])
-        deliver = data.get("deliver") or (managed[0].get("deliver") if managed else None) or destination
+        # A new one-off belongs to the requesting chat, even when a recurring
+        # subscription already delivers to another channel. Recurring changes
+        # keep the established subscription destination.
+        deliver = data.get("deliver") or (destination if action == "send_once" else
+                   (managed[0].get("deliver") if managed else None) or destination)
         # Hermes' local terminal bridges fresh session vars on every command.
         # Capture that trusted context; never use home/broadcast fallbacks.
         if not isinstance(deliver, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*:[^\s,:]+(?::[^\s,:]+)?", deliver) or deliver.split(":")[0] in {"bot-chat", "all", "local", "origin"}:

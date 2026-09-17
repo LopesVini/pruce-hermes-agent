@@ -1,0 +1,1 @@
+/command/with-contenv /opt/hermes/.venv/bin/python3 /opt/plow/whatsapp-init.py
