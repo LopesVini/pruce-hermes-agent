@@ -307,7 +307,7 @@ def looks_relative(value):
     terms = ("hoje", "amanha", "ontem", "essa semana", "esta semana",
              "daqui a", *WEEKDAYS.keys())
     return (any(re.search(rf"\b{re.escape(term)}\b", value) for term in terms)
-            or bool(re.search(r"\bem\s+\d+\s+dias?\b", value)))
+            or bool(re.search(r"\b(?:em|ate)\s+\d+\s+dias?\b", value)))
 
 
 def temporal_record(raw, captured_at, capture_basis, timezone_name, kind,
@@ -351,6 +351,10 @@ def normalize_temporal(data):
     zone = timezone(timezone_name)
     local = captured.astimezone(zone)
     phrase = folded(raw)
+    if re.search(r"\bdias?\s+uteis\b|\bdia\s+util\b", phrase):
+        return temporal_record(raw, captured_raw, capture_basis, timezone_name,
+                               "unresolved", None, "business_day_counting_unconfirmed",
+                               source, evidence)
     clock = re.search(r"\b(?:as)\s*(\d{1,2})(?::(\d{2}))?\s*h?\b", phrase)
     calendar_date = re.search(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{4}))?\b", phrase)
     if calendar_date:

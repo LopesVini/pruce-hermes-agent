@@ -13,6 +13,8 @@ FILES = (
     ".dockerignore", "Dockerfile", "README.md", "compose.yml", "runtime/persona.md",
     "vendor/client.pin", "tests/test_agent_index.py", "tests/test_operations.py",
     "tests/test_first_run.py", "tests/test_product_behavior.py",
+    "tests/test_runtime_identity.py",
+    "skills/pruce-drafting/SKILL.md",
     "tests/test_sources.py", "tests/test_state.py", "skills/pruce-onboarding/SKILL.md",
     "skills/pruce-operations/SKILL.md",
     "skills/pruce-sources/SKILL.md", "skills/pruce-sources/scripts/sources.py",

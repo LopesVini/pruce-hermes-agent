@@ -16,6 +16,41 @@ spec.loader.exec_module(state)
 
 
 class StateTests(unittest.TestCase):
+    def test_business_day_window_is_not_calendar_days_or_capture_start(self):
+        for raw in ("resposta em 5 dias úteis", "resposta em até 5 dias úteis"):
+            temporal = self.normalize(raw, captured_at="2026-09-16T23:04:23+00:00")
+            self.assertEqual(temporal["kind"], "unresolved")
+            self.assertIsNone(temporal["value"])
+            self.assertEqual(temporal["reason"], "business_day_counting_unconfirmed")
+            self.assertTrue(state.looks_relative(raw))
+            with self.assertRaises(ValueError):
+                state.run(self.path, "create", {"title": "Refund", "next_step": "Check response", "due": raw})
+
+    def test_today_capture_stays_same_local_day_on_later_read(self):
+        # UTC has already rolled over; the owner's local day has not.
+        with patch.object(state, "live_utc_now", return_value=state.datetime.fromisoformat("2026-09-17T01:04:23+00:00")):
+            temporal = state.run(self.path, "normalize-time", {
+                "raw": "hoje", "capture_basis": "live_runtime_clock_at_capture",
+                "timezone": "America/Sao_Paulo", "source": "user"})
+        self.assertEqual(temporal["value"], "2026-09-16")
+        self.assertEqual(temporal["captured_at"], "2026-09-16T22:04:23-03:00")
+        task = state.run(self.path, "create", {"title": "Capture fixture", "next_step": "Check", "temporal": temporal})
+        before = self.path.read_bytes()
+        current = state.run(self.path, "active")["tasks"][0]["effective_temporal"]
+        result = state.run(self.path, "time-status", {"temporal": current, "now": "2026-09-17T02:00:00+00:00"})
+        self.assertEqual(result["relation"], "today")
+        self.assertEqual(current["captured_at"], temporal["captured_at"])
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_incomplete_preparation_remains_actionable_beside_external_wait(self):
+        preparation = self.create(title="Preparar avaliação futura")
+        refund = state.run(self.path, "create", {"title": "Refund", "next_step": "Await company"})
+        state.run(self.path, "update", {"id": refund["id"], "status": "waiting_for_third_party",
+            "evidence": {"kind": "user_confirmation", "detail": "User submitted refund request"}})
+        tasks = {t["id"]: t for t in state.run(self.path, "active")["tasks"]}
+        self.assertEqual(tasks[preparation["id"]]["status"], "needs_action")
+        self.assertEqual(tasks[refund["id"]]["status"], "waiting_for_third_party")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

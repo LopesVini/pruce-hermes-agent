@@ -99,6 +99,13 @@ to reopen a closed subject, update the same ID and explain the correction.
 
 ## Bureaucracy and adulting loops
 
+Incomplete information is not evidence of a third-party wait. Classify by who
+must take the next concrete step: actionable work can remain `needs_action`
+while details are missing; use `waiting_for_user` when a specific missing user
+answer actually blocks that step. Use `waiting_for_third_party` only with
+evidence of an external request and a named response being awaited. Do not
+group unrelated records under a shared waiting status.
+
 Use the same task record for subscriptions, trials, renewals, refunds, support
 cases, applications, document requests, registrations, warranties and expiring
 benefits. Do not add a parallel process record. The existing fields carry the
@@ -213,6 +220,22 @@ them. Use `pruce-operations` only to reconcile an existing receipt, or in a
 future external-write path after that path is explicitly enabled.
 
 ## Temporal grounding
+
+A capture timestamp marks when information was recorded, not when the underlying
+request was sent or when a response window began. Never infer that “5 dias úteis”
+starts at captured_at. Preserve it as unresolved until its start and counting
+convention are confirmed. Do not calculate business days as calendar days.
+For “hoje”, “ontem” or elapsed-time claims about capture, compare that timestamp
+with a fresh clock in the owner's timezone; do not invent a relative label from
+memory. If that comparison is unnecessary, omit the label.
+
+“Acompanha isso comigo” records an open loop, not an immediate reminder.
+Respect an explicitly requested reminder time separately from the process's
+response deadline; never reuse another record's reminder. This release does
+not automatically schedule process follow-ups. If a future enabled scheduling
+path lacks a grounded useful time, ask or save without cron, never choose an
+arbitrary few-minute delay. A requested time already past needs clarification,
+not a false claim that it was scheduled for today.
 
 Normalize a deadline before saving it:
 

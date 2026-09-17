@@ -50,6 +50,12 @@ something is `in_progress`.
 
 ## What Now route
 
+Missing details do not make an obligation non-actionable. Use the current
+status and next step of each record independently, not a shared category for
+the whole backlog. Preparation may need the owner's time even when its subject
+or scope is unknown; identify a useful first step or ask what blocks it. An
+external wait on another record does not turn this work into a third-party wait.
+
 Use this route for “Tenho duas horas, o que faço?”, “What should I work on
 now?” and equivalent requests with a real available-time window. Read active
 open loops once. Consult the current calendar only when its availability can

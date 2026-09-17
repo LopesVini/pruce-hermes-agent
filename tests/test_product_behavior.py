@@ -7,6 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 PERSONA = (ROOT / "runtime/persona.md").read_text()
 ONBOARDING = (ROOT / "skills/pruce-onboarding/SKILL.md").read_text()
+DRAFTING = (ROOT / "skills/pruce-drafting/SKILL.md").read_text()
 TASKS = (ROOT / "skills/pruce-tasks/SKILL.md").read_text()
 OPERATIONS = ROOT / "skills/pruce-tasks/scripts/operations.py"
 OPERATIONS_SKILL = (ROOT / "skills/pruce-operations/SKILL.md").read_text()
@@ -52,6 +53,37 @@ def marked_section(text, name):
 
 
 class ProductBehaviorTests(unittest.TestCase):
+    def test_owner_drafts_do_not_invent_excuses_or_promises(self):
+        text = normalized(DRAFTING)
+        self.assertLessEqual(len(frontmatter_description(DRAFTING)), 60)
+        self.assertIn("draft", frontmatter_description(DRAFTING))
+        self.assertIn("facts only", frontmatter_description(DRAFTING))
+        self.assertIn("never invent a cause, justification, event, commitment, promise, intention or future plan", text)
+        self.assertIn("omit it and write neutrally", text)
+        self.assertIn("ask one brief question only when that detail is essential", text)
+        self.assertIn("professor daniel, boa noite. peço desculpas pelo atraso na aula de hoje.", text)
+        self.assertIn("agradeço a compreensão.", text)
+        self.assertIn("do not add “tive um imprevisto no trajeto”", text)
+        self.assertIn("unless the owner stated it", text)
+
+    def test_owner_drafting_skill_is_bundled_and_not_persona_only(self):
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        dockerignore = (ROOT / ".dockerignore").read_text()
+        self.assertIn("/opt/hermes/skills/pruce-drafting", dockerfile)
+        self.assertIn("!skills/pruce-drafting/skill.md", normalized(dockerignore))
+
+    def test_missing_details_are_not_shared_third_party_waits(self):
+        self.assertIn("incomplete information is not evidence of a third-party wait", normalized(TASKS))
+        self.assertIn("use the current status and next step of each record independently", normalized(TRIAGE))
+
+    def test_follow_up_does_not_invent_cron_or_response_start(self):
+        text = normalized(TASKS)
+        self.assertIn("not when the underlying request was sent", text)
+        self.assertIn("never infer that “5 dias úteis” starts at captured_at", text)
+        self.assertIn("never reuse another record's reminder", text)
+        self.assertIn("never choose an arbitrary few-minute delay", text)
+        self.assertIn("a requested time already past needs clarification", text)
+
     def test_current_base_and_environment_credentials_are_pinned(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
         compose = (ROOT / "compose.yml").read_text()
