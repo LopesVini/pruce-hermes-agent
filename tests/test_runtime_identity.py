@@ -55,6 +55,9 @@ class RuntimeIdentityTests(unittest.TestCase):
                 'connected external sources are',
                 'Only read or change Prucê',
                 'Do not narrate internal reasoning',
+                'Public UFMG RU menu',
+                'Keep routing deliberations, cache/fetch decisions, tool/skill names',
+                'Never start a Portuguese reply with English planning.',
             ):
                 self.assertIn(rule, text)
             self.assertIn((ROOT / 'runtime/persona.md').read_text().strip(), text)

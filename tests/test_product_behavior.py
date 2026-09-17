@@ -53,6 +53,23 @@ def marked_section(text, name):
 
 
 class ProductBehaviorTests(unittest.TestCase):
+    def test_bandejao_reply_has_no_routing_or_english_planning_preamble(self):
+        # Prompt contract, not a simulated model output. Runtime tests separately
+        # verify this exact rule reaches the real always-on identity.
+        text = normalized(PERSONA)
+        for rule in (
+            'routing deliberations, cache/fetch decisions, tool/skill names and planning notes',
+            'including any preamble before the answer',
+            'omit them entirely',
+            "in the owner's language",
+            'never start a portuguese reply with english planning',
+            'for “o que tem no bandejão hoje?”',
+            "prior menus do not by themselves establish the owner's preferred ru",
+        ):
+            self.assertIn(rule, text)
+        ru_skill = normalized((ROOT / 'skills/pruce-ru/SKILL.md').read_text())
+        self.assertIn('never prefix it with routing reasoning, cache/fetch decisions', ru_skill)
+
     def test_owner_drafts_do_not_invent_excuses_or_promises(self):
         text = normalized(DRAFTING)
         self.assertLessEqual(len(frontmatter_description(DRAFTING)), 60)

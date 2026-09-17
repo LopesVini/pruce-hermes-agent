@@ -10,6 +10,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = (
+    "tests/test_ru.py", "skills/pruce-ru/SKILL.md", "skills/pruce-ru/scripts/menu.py",
     ".dockerignore", "Dockerfile", "README.md", "compose.yml", "runtime/persona.md",
     "vendor/client.pin", "tests/test_agent_index.py", "tests/test_operations.py",
     "tests/test_first_run.py", "tests/test_product_behavior.py",

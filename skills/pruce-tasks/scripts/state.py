@@ -32,6 +32,7 @@ RADAR_PREFERENCES = {
     "pending", "university_deadlines", "important_replies",
     "adulting_bureaucracy", "skipped",
 }
+RU_PREFERENCES = {"setorial_1", "setorial_2", "saude", "direito", "ica"}
 WEEKDAYS = {
     "segunda": 0, "segunda-feira": 0, "terca": 1, "terca-feira": 1,
     "quarta": 2, "quarta-feira": 2, "quinta": 3, "quinta-feira": 3,
@@ -200,7 +201,9 @@ def validate_profile_value(value, name):
 def validate_profile(profile):
     fields = {"preferred_name", "timezone", "university", "course",
               "primary_radar_preference"}
-    keys(profile, fields, fields)
+    keys(profile, fields | {"preferred_ru"}, fields)
+    if "preferred_ru" in profile:
+        validate_ru_preference(profile["preferred_ru"])
     validate_profile_value(profile["preferred_name"], "preferred_name")
     validate_profile_value(profile["university"], "university")
     validate_profile_value(profile["course"], "course")
@@ -226,7 +229,9 @@ def validate_profile(profile):
 def validate_profile_patch(profile):
     fields = {"preferred_name", "timezone", "university", "course",
               "primary_radar_preference"}
-    keys(profile, fields)
+    keys(profile, fields | {"preferred_ru"})
+    if "preferred_ru" in profile:
+        validate_ru_preference(profile["preferred_ru"])
     for name in ("preferred_name", "university", "course"):
         if name in profile:
             validate_profile_value(profile[name], name)
@@ -237,6 +242,11 @@ def validate_profile_patch(profile):
     if "primary_radar_preference" in profile:
         require(profile["primary_radar_preference"] in RADAR_PREFERENCES,
                 "invalid primary radar preference")
+
+
+def validate_ru_preference(value):
+    require(value is None or (isinstance(value, str) and value in RU_PREFERENCES),
+            "invalid preferred RU")
 
 
 def effective_profile(state):
