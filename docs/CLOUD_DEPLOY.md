@@ -40,15 +40,45 @@ state, sources, operation receipts and Index identity stay in the isolated home.
 The reporter depends on `plow-init`, stands down on unreadable Index state, and
 passes the bearer only to registration. Do not reset persistent identities.
 
-## Why the base pin stays unchanged
+On a new deployment with no owner chat yet, the base waits and polls identity
+every 30 seconds. Once the chat exists, it starts without a restart and creates
+an empty checkpoint only if absent, so the first inbound message is recovered.
+An existing checkpoint is never reset.
 
-The working tree already pins base `80ef5024eb4b770e727a618a9b55421c73da6228`
-by digest. It already supports environment provisioning, proxy-placeholder
-authentication and no-Mac bootstrap. Comparing it with current base `910b8e3`
-shows no bootstrap changes: later image changes bump the chat plugin for voice,
-interrupts, invites and Plow/Latch capability wording. They do not establish a
-required One Click contract change. Life Assistant uses the same Index client
-pin as Prucê. Neither pin is updated solely for recency.
+## Base pin: first-contact bootstrap fix (2026-09-17)
+
+Previous base `80ef5024eb4b770e727a618a9b55421c73da6228` permanently parks when
+identity has no owner chat. A later-created chat does not recover that boot.
+The official [PR #118](https://github.com/plow-pbc/plow-hermes-agent/pull/118)
+fixes this at `357b64bb4eb97ddb7d51755381bb11d7c343fe2a`.
+Prucê now pins its official ECR image at
+`sha256:706da15301d3ef69d13356bd05412bd5ea048f15434933b33ab6ccd08adf2dd1`.
+The registry's image revision and boot source agree with that commit.
+
+The underlying Hermes digest is unchanged. The inherited Plow plugin moves
+from `8e055e059ce774b455869d915525e63933db18fe` to
+`df38405acf7d951d138b4b862316b4235d5154bf` (voice, owner interrupts, invites and
+capability wording). The seed config changes only comments. This deliberately
+predates later timezone-default changes; Prucê persona, skills, state paths,
+cloud defaults and Agent Index client/service are unchanged.
+
+## Reproduce first-contact bootstrap
+
+```sh
+PRUCE_TEST_IMAGE=<new-image> \
+PRUCE_BASELINE_IMAGE=ghcr.io/lopesvini/pruce-hermes-agent@sha256:97d5d2adc6008fec1cf3202d6e420f27efc836bdee1eaa4fe8337f9e6a3f9a5a \
+python3 -B tests/check_cloud_bootstrap.py
+```
+
+The check runs actual `/init`, the native Hermes gateway and Plow transport on
+an internal Docker network with a synthetic API and completely empty `nocopy`
+volumes. It reproduces the old permanent park, creates the owner chat several
+seconds after boot, verifies recovery without restart, and observes the first
+`/status` message answered by Hermes through native REST delivery. No model or
+real messaging service is simulated as a successful live service. It then
+checks state, source/operation fixtures and the message checkpoint across a
+restart, including no duplicate first-message delivery. Existing-chat boot is
+checked separately. Only disposable test resources are removed.
 
 ## Publishing and enabling the listing
 

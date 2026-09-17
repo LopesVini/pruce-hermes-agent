@@ -1,6 +1,6 @@
-# Base source 80ef5024eb4b770e727a618a9b55421c73da6228 pins
-# hermes-plugin-plow at 8e055e059ce774b455869d915525e63933db18fe.
-FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-80ef5024eb4b770e727a618a9b55421c73da6228@sha256:864771e8165db16c11a55635df85696f39d91020f258576dd62b7cab0515514f
+# Base source 357b64bb4eb97ddb7d51755381bb11d7c343fe2a pins
+# hermes-plugin-plow at df38405acf7d951d138b4b862316b4235d5154bf.
+FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-357b64bb4eb97ddb7d51755381bb11d7c343fe2a@sha256:706da15301d3ef69d13356bd05412bd5ea048f15434933b33ab6ccd08adf2dd1
 
 # Cloud deploy runs the image directly, without the local Compose environment.
 ENV AGENT_ID=pruce
