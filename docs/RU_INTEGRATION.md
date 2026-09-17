@@ -61,33 +61,163 @@ These are dated observations, not immutable fixtures or a live iMessage test.
 Fump warns that menus may change without notice. Unit fixtures are synthetic;
 real public API smoke checks are separate from the offline regression suite.
 
-## Remaining daily opt-in connection
+## Daily opt-in through native Hermes cron
 
-No cron job, subscription or automatic send is created by this release.
-Pinned Hermes already supports `cronjob` with `script`, `no_agent=true`,
-`schedule`, `deliver`, `failure_deliver`; its schema explicitly says script-only
-jobs deliver stdout verbatim and empty stdout sends nothing. Script paths must
-resolve inside `$HERMES_HOME/scripts/`, **not directly inside the skill**.
+### Query versus delivery — real failure and corrected entry
 
-The smallest next step after explicit consent:
+Read-only inspection of the owner's failed 10h54 turn confirmed: `skill_view`
+loaded pruce-ru, then `terminal` invoked menu.py, then a menu was returned;
+subscription.py was never called. The prior skill's unconditional reader
+instruction came before intent selection, and the adapter only implemented
+recurrence. No one-off scheduling path existed. No personal transcript,
+identity or credential is copied into this report.
 
-1. Confirm RU (save preference), local send time/timezone and one verified
-   owner DM destination. Do not assume “before lunch” means a particular time.
-2. Install a small wrapper in `/var/lib/hermes/scripts/` that calls this reader
-   at execution time for today/lunch. It must print **only `result['text']`**
-   when `status == 'ok'` and `items` is nonempty. On all other statuses print
-   nothing; never print the reader's full JSON or errors to the recipient.
-3. Create one script-only Hermes cron job (`no_agent=true`) for the agreed
-   time and explicit destination, with failures kept local. Persist any
-   subscription metadata in profile/cron, never in task open loops. Choose
-   deliberately whether later RU preference changes update the job.
-4. Test port 3003 from the actual deployment, timezone, empty stdout suppression,
-   channel delivery, cancellation/update and restart persistence. Prefer an
-   update to duplicate subscriptions; never broadcast to all channels.
+All conversational RU requests now go through `request.py` with the user's
+actual wording as JSON. Its intent classifier runs before a source request:
+query, once, recurring, change or cancel. A future request cannot return menu
+items through this entry: it schedules or asks for a missing detail. The
+always-on persona and real Hermes skill-loading regression require this route.
+This verifies deterministic dispatch inside the entry, not an unconditional
+guarantee that an LLM can never disregard an instruction to use it.
 
-No Plow backend change is needed for public menu reads. Actual cron delivery
-depends on the deployed gateway/channel configuration; this release does not
-claim that delivery was validated.
+* “O que tem no RU II hoje?” returns the current menu.
+* “Me manda o RU II hoje às 10h54” creates a native `kind=once` job if future;
+  a past time asks for another date/time, without showing a menu.
+* “Me manda o RU II daqui a 5 minutos” computes the timestamp from the live
+  runtime clock, creates one native job with repeat.times=1 and confirms only.
+* “Me manda o RU II todo dia às 11h” creates/updates the recurring job.
+
+One-offs use `pruce-ru-once:<key>` names, generated bootstrap scripts in the
+existing Hermes scripts directory, and prompt metadata marker
+`pruce_ru_once_v1`. Key hashes the aware timestamp and one destination;
+repeating that same timestamp reuses its job. One-offs coexist with the one
+recurring subscription. The bootstrap selects exactly its own job, not a
+different subscription. Cancellation removes managed one-offs and recurrence.
+Native job storage, provider registration, due checks and terminal lifecycle
+remain Hermes' responsibility; there is no new scheduler.
+
+### Persisted lunch-time opt-in
+
+Optional `profile.ru_delivery` contains stage, pending_lunch_time,
+usual_lunch_time and RU reference. Legacy profiles remain valid without it.
+After a successful query without configured recurrence or offer history, the
+entry appends “Você costuma almoçar que horas?” once and records its stage.
+A time answer records only a pending candidate and offers a concrete send
+time one hour before lunch, Monday–Friday by default, with alterable days.
+Only acceptance creates the cron and saves usual_lunch_time. Known preferred_ru
+is honored. “Sim, mas todos os dias” selects daily instead of weekdays.
+
+Decline and cancellation persist and suppress further automatic offers across
+queries, sessions and restarts. Bare “sim” without a pending offer is not
+consent. Direct explicit subscription requests remain allowed after decline.
+Changing usual lunch time offers the new send time for fresh confirmation;
+existing delivery is unchanged until acceptance. Direct RU/send-time changes
+update the same recurring job. No offer counter or unsolicited send is added.
+
+No task or open loop is created by this onboarding. Failed source queries do
+not initiate the offer. A lunch time that would shift the send to the previous
+day asks for an explicit send time rather than guessing weekday semantics.
+
+Implemented by `subscription.py` (management adapter) and `daily.py` (delivery
+payload). No new scheduling engine, polling loop, subscription database or
+task/open loop. The normal menu reader remains unchanged.
+
+Only explicit owner consent enables delivery. A first request needs RU, exact
+local HH:MM, `daily` or `weekdays`, and known/confirmed IANA timezone. “Antes do
+almoço” asks for a time before creating anything. Missing RU uses canonical
+preferred_ru, otherwise asks. A known America/Sao_Paulo profile is honored;
+unknown timezone asks for confirmation rather than assuming the server clock.
+
+The adapter captures the destination with native `_origin_from_env`, from the
+fresh session vars that Hermes' local terminal injects on each command. This
+is not a model-guessed chat ID or home-channel fallback. Group context is
+rejected. One explicit destination and the captured origin are stored; failure
+notices stay `local`. A deployment/backend that does not bridge a verified DM
+destination fails closed; do not claim notifications were enabled there.
+
+### Native persisted record
+
+The persistent volume contains:
+
+* `/var/lib/hermes/cron/jobs.json`: one managed job named `pruce-ru-daily`, with
+  `script: pruce-ru-daily.py`, `no_agent: true`, native schedule, destination,
+  origin and `failure_deliver: local`. Its ignored-by-model `prompt` stores
+  JSON metadata: `kind: pruce_ru_daily_v1`, RU, agreed time/days/timezone and
+  opt_in. Native APIs handle job locking/storage and provider registration.
+* `/var/lib/hermes/scripts/pruce-ru-daily.py`: atomic installed bootstrap that
+  invokes the current installed skill code. No menu snapshot or personal path.
+* `/var/lib/hermes/pruce/state.json`: existing optional preferred_ru, saved
+  after successful subscription. Other profile fields and tasks are untouched.
+* `/var/lib/hermes/pruce/ru-subscription.lock`: management-only advisory lock
+  preventing concurrent duplicate subscriptions, not another scheduler/store.
+
+Repeated requests update the same job ID; RU/time changes reuse established
+details/destination. Existing duplicates are consolidated only when name,
+script and metadata marker match. Unrelated jobs are preserved. A failed cloud
+registration can leave a native record; retry updates/registers that record,
+not a duplicate. Never confirm success after a registration error.
+Cancelling removes managed jobs, preserves preferred_ru and other state, and
+is idempotent. A later preference-only save does not change an existing
+subscription's RU; an explicit subscription change does.
+
+Hermes cron uses its profile timezone, not a per-job timezone. The adapter
+translates the agreed local time and weekdays into that scheduler clock when
+their relative offset is stable (checked across 400 days). Example: 11h Brasília
+becomes `0 14 * * *` on UTC; weekdays becomes `0 14 * * 1,2,3,4,5`.
+On a matching America/Sao_Paulo scheduler it is `0 11 * * *`. A DST mismatch
+is refused instead of flattening a changing offset. Configure the Hermes
+profile timezone consistently before enabling that case. Do not later change
+the scheduler timezone without updating the subscription.
+
+### Execution and silence
+
+Native `no_agent` execution calls the current reader once for today's lunch.
+Only `status=ok` with nonempty items prints menu text. Unpublished, unavailable,
+invalid, cancelled, ambiguous or corrupt subscription yields empty stdout and
+successful silent exit. Hermes already suppresses empty stdout; no model,
+Mac, Google, repeated failure DM, retry loop or catch-up send is involved.
+Delivery still uses the installation's existing messaging transport; fetching
+does not need Latch, but an iMessage transport may have its own dependencies.
+
+The persisted lunch-time offer above replaces the former conversational
+suggestion. Do not append a second offer to each query; no unsolicited
+scheduled question or counter is created. Decline/cancellation suppress it.
+
+### iMessage validation after activation
+
+1. `/new`, then “Me manda o cardápio do RU II todo dia antes do almoço.”
+   Expect a time question and no job yet. Reply with an exact time.
+2. With a known RU/fuso, “Todo dia às 11h me manda o bandejão.” Expect one
+   confirmed subscription. Repeat and inspect status: the job ID stays the same.
+3. “Me avisa o cardápio do RU I de segunda a sexta às 11h.” Then “Troca para
+   o RU II.” Expect an update, not a second subscription.
+4. For an end-to-end send, explicitly request a time a few minutes ahead during
+   a day with published menus. Keep the gateway running; confirm one useful
+   menu at that time. Do not use an already-past time to test immediate delivery.
+5. “Para de me mandar o bandejão” or “Não quero mais o cardápio diário.”
+   Expect cancellation; the native job is removed and no next scheduled send.
+
+Single future send: “Me manda o cardápio do RU II daqui a 5 minutos.” Expect
+confirmation only and a native once job with repeat.times=1; no menu now.
+Keep the gateway running and confirm a useful published menu at execution.
+Onboarding: query a menu with no offer history, answer “12h”, then accept the
+11h Monday–Friday offer. Refuse on a separate fresh test deployment and confirm
+later queries do not repeat the offer. Do not reset the owner's real profile
+just to manufacture a clean onboarding test.
+
+Offline tests use temporary Hermes homes and synthetic destinations, including
+real native store/provider APIs, fresh terminal routing bridge, concurrent
+requests, updates/cancellation, timezone conversion, provider failure retry,
+the native no-agent silence gate and a real cancelled wrapper subprocess.
+Source/menu and native delivery-gate fixtures are synthetic; actual owner
+iMessage delivery and private Plow scheduler availability are not claimed as
+validated by those tests. No subscription was created in the owner's runtime.
+
+Additional live-public smoke in an ephemeral read-only linux/amd64 container:
+native `scheduler.run_job` executed the installed bootstrap and current reader,
+returned the real RU II menu in 0.799 s, then returned Hermes' SILENT_MARKER
+after cancellation. No channel sender was invoked. A separate direct reader
+run in the same packaging took 0.238 s and a RU change retained the job ID.
 
 ## Validation and activation
 

@@ -33,6 +33,7 @@ RADAR_PREFERENCES = {
     "adulting_bureaucracy", "skipped",
 }
 RU_PREFERENCES = {"setorial_1", "setorial_2", "saude", "direito", "ica"}
+RU_OFFER_STAGES = {"awaiting_lunch_time", "awaiting_consent", "declined", "accepted", "cancelled"}
 WEEKDAYS = {
     "segunda": 0, "segunda-feira": 0, "terca": 1, "terca-feira": 1,
     "quarta": 2, "quarta-feira": 2, "quinta": 3, "quinta-feira": 3,
@@ -201,9 +202,11 @@ def validate_profile_value(value, name):
 def validate_profile(profile):
     fields = {"preferred_name", "timezone", "university", "course",
               "primary_radar_preference"}
-    keys(profile, fields | {"preferred_ru"}, fields)
+    keys(profile, fields | {"preferred_ru", "ru_delivery"}, fields)
     if "preferred_ru" in profile:
         validate_ru_preference(profile["preferred_ru"])
+    if "ru_delivery" in profile:
+        validate_ru_delivery(profile["ru_delivery"])
     validate_profile_value(profile["preferred_name"], "preferred_name")
     validate_profile_value(profile["university"], "university")
     validate_profile_value(profile["course"], "course")
@@ -229,9 +232,11 @@ def validate_profile(profile):
 def validate_profile_patch(profile):
     fields = {"preferred_name", "timezone", "university", "course",
               "primary_radar_preference"}
-    keys(profile, fields | {"preferred_ru"})
+    keys(profile, fields | {"preferred_ru", "ru_delivery"})
     if "preferred_ru" in profile:
         validate_ru_preference(profile["preferred_ru"])
+    if "ru_delivery" in profile:
+        validate_ru_delivery(profile["ru_delivery"])
     for name in ("preferred_name", "university", "course"):
         if name in profile:
             validate_profile_value(profile[name], name)
@@ -247,6 +252,17 @@ def validate_profile_patch(profile):
 def validate_ru_preference(value):
     require(value is None or (isinstance(value, str) and value in RU_PREFERENCES),
             "invalid preferred RU")
+
+
+def validate_ru_delivery(value):
+    fields = {"stage", "pending_lunch_time", "usual_lunch_time", "ru"}
+    keys(value, fields, fields)
+    require(value["stage"] in RU_OFFER_STAGES, "invalid RU offer stage")
+    validate_ru_preference(value["ru"])
+    for name in ("pending_lunch_time", "usual_lunch_time"):
+        at = value[name]
+        require(at is None or (isinstance(at, str) and
+                re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", at)), "invalid lunch time")
 
 
 def effective_profile(state):

@@ -126,11 +126,17 @@ correct it and follow the canonical result.
 Choose the narrowest path that can answer the owner's actual question:
 
 - **Public UFMG RU menu:** for RU/bandejão questions use `pruce-ru` and its
-  direct Fump reader, once. This public source needs no Mac, Latch or Google.
+  `request.py` entry with the owner's actual wording. It distinguishes a query,
+  one-time future delivery and recurring delivery before any source fetch.
+  A future delivery request must not show a menu now: schedule it and return
+  only confirmation, or ask for missing details. This public source needs no Mac, Latch or Google.
   An explicit RU wins; otherwise use canonical `profile.preferred_ru`, asking
   which RU only if absent. Do not read open loops, source maps, email or
   calendar for menus. Never infer dishes or promise daily delivery without
-  an explicit opt-in and a verified schedule.
+  an explicit opt-in and a verified schedule. Use the same `pruce-ru` skill
+  for requests to subscribe, change or cancel daily menus. Ask for a concrete
+  time when the owner only says “antes do almoço”; create no job until RU,
+  time, days, timezone and this owner's DM destination are established.
 - **Fast path:** ordinary conversation and historical recall use no tools. If
   the answer depends only on a current saved task fact, make one relevant
   `pruce-tasks` read and answer; do not inspect the source map, email or

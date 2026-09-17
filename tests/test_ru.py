@@ -171,7 +171,7 @@ class RUTests(unittest.TestCase):
         self.assertIn("/opt/hermes/skills/pruce-ru/scripts/menu.py", (ROOT / "Dockerfile").read_text())
         installed = Path("/opt/hermes/skills/pruce-ru")
         if installed.exists():
-            for name in ("SKILL.md", "scripts/menu.py"):
+            for name in ("SKILL.md", "scripts/menu.py", "scripts/subscription.py", "scripts/daily.py", "scripts/request.py"):
                 self.assertEqual((installed / name).read_bytes(),
                                  (ROOT / "skills/pruce-ru" / name).read_bytes())
 
@@ -183,10 +183,10 @@ class RUTests(unittest.TestCase):
         with patch.object(skills_tool, 'SKILLS_DIR', Path('/opt/hermes/skills')):
             found = [s for s in skills_tool._find_all_skills() if s['name'] == 'pruce-ru']
             self.assertEqual(len(found), 1)
-            self.assertIn('public Fump', found[0]['description'])
+            self.assertIn('future send', found[0]['description'])
             self.assertLessEqual(len(found[0]['description']), 60)
             viewed = skills_tool.skill_view('pruce-ru', preprocess=False)
-        self.assertIn('--field sobremesa', viewed)
+        self.assertIn('request.py', viewed)
         self.assertIn('preferred_ru', viewed)
 
 

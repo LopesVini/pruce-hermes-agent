@@ -58,6 +58,8 @@ class RuntimeIdentityTests(unittest.TestCase):
                 'Public UFMG RU menu',
                 'Keep routing deliberations, cache/fetch decisions, tool/skill names',
                 'Never start a Portuguese reply with English planning.',
+                'for requests to subscribe, change or cancel daily menus.',
+                'one-time future delivery and recurring delivery before any source fetch.',
             ):
                 self.assertIn(rule, text)
             self.assertIn((ROOT / 'runtime/persona.md').read_text().strip(), text)
