@@ -31,6 +31,7 @@
 !vendor/
 !vendor/client.pin
 !image/
+!image/patch_ru_delivery.py
 !image/s6-overlay/
 !image/s6-overlay/**
 !LICENSE

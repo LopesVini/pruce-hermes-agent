@@ -221,6 +221,29 @@ run in the same packaging took 0.238 s and a RU change retained the job ID.
 
 ## Validation and activation
 
+### Clean proactive message body
+
+The real iMessage one-off delivery succeeded, but Hermes added “Cronjob
+Response”, job ID and its English management footer in `_deliver_result`.
+The same renderer is used for recurring menus. The native wrap_response flag
+is global, so toggling it would also change unrelated jobs.
+
+The image now applies `image/patch_ru_delivery.py` to the pinned delivery
+renderer. It changes only whether the header/footer is added: an opted-in
+no_agent RU record must match our name, script and JSON marker (plus generated
+key for one-offs). Its content reaches both live-adapter and standalone sender
+unchanged. Other jobs, failure rendering and the native global flag keep their
+existing behavior. Cron storage, due checks, execution, targets and cancellation
+are untouched. Existing valid RU jobs benefit after restart; do not recreate
+their schedules or modify personal config.yaml.
+
+The build verifies the original renderer's exact SHA256 and unique patch
+anchor; a different base source fails closed and requires review. The base
+image pin/digest is unchanged. Regression invokes the real native delivery
+formatter and captures only synthetic sender boundaries: once and daily must
+deliver the exact menu without internal metadata, through both transport paths.
+No owner channel is contacted by these tests.
+
 Offline suite: `python3 -B tests/run_in_image.py` after
 `docker build --platform linux/amd64 -t pruce-index-check:local .`.
 Includes alias/date/failure/preference tests, real Hermes skill discovery/load,

@@ -2,6 +2,10 @@
 # hermes-plugin-plow at 8e055e059ce774b455869d915525e63933db18fe.
 FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-80ef5024eb4b770e727a618a9b55421c73da6228@sha256:864771e8165db16c11a55635df85696f39d91020f258576dd62b7cab0515514f
 
+# Omit native cron headers only for authenticated Prucê RU delivery records.
+COPY --chmod=0644 image/patch_ru_delivery.py /opt/plow/patch-ru-delivery.py
+RUN /opt/hermes/.venv/bin/python3 -B /opt/plow/patch-ru-delivery.py
+
 # plow-init composes the base SOUL plus this persona on every boot.
 COPY --chmod=0644 runtime/persona.md /opt/hermes/plow-seed/persona.md
 # Follow the official variant: Hermes reconciles bundled skills into its home.
