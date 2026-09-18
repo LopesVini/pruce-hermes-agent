@@ -318,7 +318,7 @@ Index client and the adapted s6 supervisor remain Apache-2.0; see `NOTICE` and
 upstream licenses and notices.
 
 - [Plow Hermes base](https://github.com/plow-pbc/plow-hermes-agent)
-- [Official Agent Index client pin](https://github.com/plow-pbc/agent-index-client/tree/87901f8b182a8a7c65ee3dd7267f8f835ee2a545)
+- [Official Agent Index client pin](https://github.com/plow-pbc/agent-index-client/tree/3f116994930cb3d1c23a485851953dd6c1eef039)
 - [Official Life Assistant variant](https://github.com/plow-pbc/life-assistant-hermes-agent)
 
 ## WhatsApp

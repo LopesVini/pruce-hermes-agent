@@ -608,7 +608,7 @@ Never:
 
 Agent Index client pin has remained:
 
-87901f8b182a8a7c65ee3dd7267f8f835ee2a545
+3f116994930cb3d1c23a485851953dd6c1eef039
 
 Demo metadata currently includes:
 - public image
