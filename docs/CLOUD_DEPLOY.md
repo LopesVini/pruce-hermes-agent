@@ -55,6 +55,10 @@ Prucê now pins its official ECR image at
 `sha256:706da15301d3ef69d13356bd05412bd5ea048f15434933b33ab6ccd08adf2dd1`.
 The registry's image revision and boot source agree with that commit.
 
+Bumped 2026-09-19 to base `ef0019372ff8bca593611b31ebd2e08f9f1458ff`
+(`sha256:a8a2f97ad78b8192d80a984dce81d3bf5a9a883d18cb7b677704913a09b56aee`),
+which ships the Agent Index reporter itself; Prucê no longer carries a copy.
+
 The underlying Hermes digest is unchanged. The inherited Plow plugin moves
 from `8e055e059ce774b455869d915525e63933db18fe` to
 `df38405acf7d951d138b4b862316b4235d5154bf` (voice, owner interrupts, invites and

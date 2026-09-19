@@ -249,7 +249,7 @@ map stores coverage metadata, not document or message bodies. Conversations
 pass through Plow and the configured model provider; their retention and
 protection follow those services' policies.
 
-Agent Index reporting is opt-in through `AGENT_ID`. The pinned official client
+Agent Index reporting is opt-in through `AGENT_ID`. The Plow base image's own client
 reads Hermes' `session_model_usage` counters and sends day, model, input/output
 tokens, and cache read/write tokens every five minutes. It does **not** read or
 send prompts, messages, open-loop titles, documents, or the Prucê JSON state.
@@ -313,12 +313,12 @@ content, or account data.
 ## License
 
 Prucê's original code and documentation are MIT licensed. The official Agent
-Index client and the adapted s6 supervisor remain Apache-2.0; see `NOTICE` and
+Index client and its s6 service, shipped by the base, remain Apache-2.0; see `NOTICE` and
 `LICENSES/Apache-2.0.txt`. The inherited Plow and Hermes image keeps its own
 upstream licenses and notices.
 
 - [Plow Hermes base](https://github.com/plow-pbc/plow-hermes-agent)
-- [Official Agent Index client pin](https://github.com/plow-pbc/agent-index-client/tree/3f116994930cb3d1c23a485851953dd6c1eef039)
+- [Official Agent Index client](https://github.com/plow-pbc/agent-index-client), shipped by the base
 - [Official Life Assistant variant](https://github.com/plow-pbc/life-assistant-hermes-agent)
 
 ## WhatsApp
