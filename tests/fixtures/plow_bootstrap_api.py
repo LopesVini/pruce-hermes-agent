@@ -1,5 +1,6 @@
 """Synthetic Plow transport for isolated boot tests; never real accounts or LLMs."""
 from aiohttp import web
+from datetime import datetime, timezone
 
 LINE = {"uid": "ln_fixture", "provider_type": "imessage", "provider_key": "+15550000000",
         "display_name": "Prucê", "agent_uid": "agent_fixture"}
@@ -9,6 +10,7 @@ CHAT = {"uid": "chat_fixture", "status": "active", "trusted": False,
         "line": LINE, "participants": [OWNER,
         {"type": "agent", "relationship": "self", "line": LINE}]}
 state = {"ready": False, "calls": 0, "sockets": 0, "messages": [], "replies": []}
+AGENT_CREATED_AT = datetime.now(timezone.utc).isoformat()
 
 
 async def handle(request):
@@ -20,7 +22,7 @@ async def handle(request):
         data = await request.json()
         if data.get("first_message"):
             state["messages"] = [{"uid": "msg_first", "direction": "inbound", "sender": OWNER,
-                "body": "/status", "attachments": [], "created_at": "2026-09-17T12:00:00Z"}]
+                "body": "/status", "attachments": [], "created_at": datetime.now(timezone.utc).isoformat()}]
         return web.json_response({"ok": True})
     if path == "/v1/agents/cloud/me":
         state["calls"] += 1
@@ -34,7 +36,7 @@ async def handle(request):
     if path == "/v1/auth/profile":
         return web.json_response({"referred_by": None})
     if path == "/v1/agents/me":
-        return web.json_response({"line": LINE, "agent": {"uid": "agent_fixture",
+        return web.json_response({"line": LINE, "agent": {"uid": "agent_fixture", "created_at": AGENT_CREATED_AT,
             "settings": {"verbose_output": {"value": False}}}})
     if path == "/v1/ws/ticket":
         return web.json_response({"ticket": "offline-fixture-ticket"})

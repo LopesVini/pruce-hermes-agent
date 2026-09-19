@@ -50,7 +50,7 @@ def configured(agent):
     return python(agent, "from pathlib import Path;print((Path('/run/s6/container_environment')/'PLOW_HOME_CHANNEL').exists())") == "True"
 
 
-def scenario(image, name, baseline=False, existing=False):
+def scenario(image, name, baseline=False, existing=False, first_contact_before_connect=False):
     network = PREFIX + "-" + name
     api, agent, volume = network + "-api", network + "-agent", network + "-home"
     try:
@@ -61,7 +61,7 @@ def scenario(image, name, baseline=False, existing=False):
                "--entrypoint", "/opt/hermes/.venv/bin/python3", image, "/fixture.py")
         time.sleep(1)
         if existing:
-            create_chat(api)
+            create_chat(api, first_message=first_contact_before_connect)
         docker("run", "-d", "--platform", "linux/amd64", "--name", agent, "--network", network,
                "--mount", f"type=volume,src={volume},dst=/var/lib/hermes,volume-nocopy",
                "--env", "PLOW_API_BASE=http://" + api + ":8080", image)
@@ -93,7 +93,12 @@ def scenario(image, name, baseline=False, existing=False):
         else:
             until(lambda: configured(agent), seconds=25)
             until(lambda: status(api)["sockets"] > 0, seconds=25)
-            print("EXISTING CHAT: empty volume boots and native Plow socket connects")
+            if first_contact_before_connect:
+                until(lambda: any("status" in r.get("body", "").lower() for r in status(api)["replies"]), seconds=60)
+                until(lambda: python(agent, "from pathlib import Path;p=Path('/var/lib/hermes/plow_chat_last_uid');print(p.read_text() if p.exists() else '')") == "msg_first", seconds=20)
+                print("EARLY FIRST CONTACT: chat/message before Hermes connects is answered and checkpointed")
+            else:
+                print("EXISTING CHAT: empty volume boots and native Plow socket connects")
         facts = json.loads(python(agent, "from pathlib import Path;import json;env=Path('/run/s6/container_environment');home=Path('/var/lib/hermes');print(json.dumps({'id':(env/'AGENT_ID').read_text().strip(),'proxy':(env/'PLOW_AGENT_TOKEN').read_text().strip()=='proxied','mac':(env/'PLOW_MCP_URL').exists(),'credentials':Path('/var/lib/plow/credentials').exists(),'persona':(home/'SOUL.md').exists(),'ru':(home/'skills/pruce-ru/SKILL.md').exists()}))"))
         assert facts == {"id": "pruce", "proxy": True, "mac": False, "credentials": False, "persona": True, "ru": True}, facts
         assert not parked(agent)
@@ -131,4 +136,5 @@ if __name__ == "__main__":
         scenario(baseline, "baseline", baseline=True)
     scenario(IMAGE, "new")
     scenario(IMAGE, "existing", existing=True)
+    scenario(IMAGE, "early", existing=True, first_contact_before_connect=True)
     print("CLOUD BOOTSTRAP CHECK PASSED (isolated transport; no live iMessage/model claim)")
