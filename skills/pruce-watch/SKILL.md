@@ -86,17 +86,22 @@ Summarize both in one natural answer. Do not announce tool internals.
 
 Use `add_watch` for a specific public-web search the owner explicitly asks to
 monitor: products, flights, events, tickets, contests, jobs, real estate, cars,
-launches, scholarships, internships, hackathons or another monitorable topic.
+launches, scholarships, internships, hackathons, software releases, a public
+news topic or another monitorable topic.
 Fields: `opt_in: true`, `category` (one of `produto`, `passagem`, `evento`,
 `ingresso`, `concurso`, `vaga`, `imóvel`, `carro`, `lançamento`, `bolsa`, `estágio`,
-`hackathon`, `outro`), a short `label`, and a narrow `query`. Include locations,
-model, institution, budget or other constraints the owner supplied. Do not
+`hackathon`, `outro`), a short `label`, a narrow `query` and, when the owner's
+wording is more specific than “resultado novo”, a plain-language `condition`.
+Include locations, model, institution, budget or other constraints the owner supplied. Do not
 start a broad search like “vagas” without enough criteria to be useful. The
 script seeds a baseline from live results, checks twice daily and alerts only
 on new URLs, at most once per watch in twelve hours. Search hits are leads to
 verify at their source, not confirmed availability. `check_watch` checks now;
 `cancel_watch` stops alerts. `list` also returns generic watches. Do not pass
-a delivery target or claim a job exists until the script confirms it.
+a delivery target or claim a job exists until the script confirms it. Each
+watch keeps its condition, cadence, last observation, bounded observation
+history and active/cancelled state. A failed or empty check updates the
+observation but does not erase prior history or emit a message.
 
 The owner's chosen digest may include active watch labels, current open loops
 and today's RU when that live source is available. A missing RU or task read is

@@ -13,6 +13,7 @@ OPERATIONS = ROOT / "skills/pruce-tasks/scripts/operations.py"
 OPERATIONS_SKILL = (ROOT / "skills/pruce-operations/SKILL.md").read_text()
 TRIAGE = (ROOT / "skills/pruce-triage/SKILL.md").read_text()
 SOURCES = (ROOT / "skills/pruce-sources/SKILL.md").read_text()
+RESEARCH = (ROOT / "skills/pruce-research/SKILL.md").read_text()
 README = (ROOT / "README.md").read_text()
 ENGINEERING_JARGON = (
     "effective_temporal", "provenance", "canonical state", "source map",
@@ -53,6 +54,59 @@ def marked_section(text, name):
 
 
 class ProductBehaviorTests(unittest.TestCase):
+    def test_research_depth_is_adaptive_and_evidence_driven(self):
+        research = normalized(RESEARCH)
+        for mode in ("quick", "normal", "deep"):
+            self.assertIn(f"**{mode}:**", research)
+        for rule in (
+            "decomponha em subperguntas",
+            "buscas com propósitos diferentes",
+            "procure evidência contrária",
+            "revise as lacunas",
+            "não depois de um número artificial de buscas",
+            "nunca simule trabalho profundo repetindo a mesma consulta",
+            "separe fato verificado, inferência e recomendação",
+        ):
+            self.assertIn(rule, research)
+
+    def test_shopping_compare_and_decide_resist_confirmation_bias(self):
+        research = normalized(RESEARCH)
+        for evidence in ("versão/geração exata", "manutenção", "consumo", "seguro",
+                         "segurança", "revenda", "avaliações de usuários/donos",
+                         "geração anterior"):
+            self.assertIn(evidence, research)
+        self.assertIn("preferência inicial como hipótese, não como conclusão", research)
+        self.assertIn("shortlist de finalistas", research)
+        self.assertIn("explicando a razão", research)
+        self.assertIn("custo de oportunidade", research)
+        self.assertIn("reversibilidade", research)
+        self.assertIn("recomendação condicionada", research)
+        self.assertIn("não favoreça automaticamente o desejo inicial", research)
+
+    def test_analyze_reuses_existing_media_and_document_pipeline(self):
+        research = normalized(RESEARCH)
+        self.assertIn("visão nativa do hermes", research)
+        self.assertIn("leitura nativa de documentos do hermes", research)
+        self.assertIn("não crie ocr, parser ou pipeline paralelo", research)
+        self.assertIn("peça texto, reenvio ou páginas específicas", research)
+
+    def test_action_starter_is_short_and_not_a_repeating_menu(self):
+        persona = normalized(PERSONA)
+        self.assertIn("me joga alguma coisa", persona)
+        for verb in ("pesquisar", "comparar", "analisar", "acompanhar", "decidir", "organizar"):
+            self.assertIn(f"“{verb}”", persona)
+        self.assertIn("do not repeat this action menu after work has started", persona)
+        self.assertIn("do not force every request through all six verbs", persona)
+
+    def test_research_compare_decide_watch_keep_follow_through(self):
+        research = normalized(RESEARCH)
+        persona = normalized(PERSONA)
+        self.assertIn("pesquisa pode produzir uma comparação", research)
+        self.assertIn("fatos voláteis da decisão podem virar acompanhamento", research)
+        self.assertIn("apenas após opt-in explícito", research)
+        self.assertIn("without discarding the criteria and evidence already established", persona)
+        self.assertIn("opportunity radar", research)
+
     def test_bandejao_reply_has_no_routing_or_english_planning_preamble(self):
         # Prompt contract, not a simulated model output. Runtime tests separately
         # verify this exact rule reaches the real always-on identity.

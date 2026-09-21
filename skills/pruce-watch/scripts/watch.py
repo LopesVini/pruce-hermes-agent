@@ -739,22 +739,45 @@ def generic_results(watch, search=search_news):
     return list({item["id"]: item for item in leads}.values())
 
 
+def record_generic_observation(watch, outcome, result_count=None, new_count=0):
+    """Persist bounded evidence about checks without storing page contents."""
+    checked_at = now()
+    observation = {"at": checked_at, "outcome": outcome, "new_count": new_count}
+    if result_count is not None:
+        observation["result_count"] = result_count
+    watch["last_checked_at"] = checked_at
+    watch["last_observation"] = observation
+    watch["history"] = (watch.get("history", []) + [observation])[-100:]
+
+
+def ensure_generic_fields(watch):
+    """Keep watches created by the earlier additive schema fully usable."""
+    watch.setdefault("condition", "novo resultado público que corresponda à busca")
+    watch.setdefault("cadence", "twice_daily")
+    watch.setdefault("last_observation", None)
+    watch.setdefault("history", [])
+
+
 def check_generic(watch, search=search_news):
+    ensure_generic_fields(watch)
     try:
         leads = generic_results(watch, search)
     except Exception as error:
         LOG.warning("generic_search_error watch=%s type=%s", watch["id"], type(error).__name__)
+        record_generic_observation(watch, "unavailable")
         return ""
-    watch["last_checked_at"] = now()
     if not leads:
+        record_generic_observation(watch, "ok", 0)
         return ""
     if not watch.get("baseline_ready"):
         watch["seen"] = [item["id"] for item in leads]
         watch["baseline_ready"] = True
+        record_generic_observation(watch, "baseline", len(leads))
         return ""
     seen = set(watch.get("seen", []))
     fresh = [item for item in leads if item["id"] not in seen][:3]
     watch["seen"] = list(dict.fromkeys(watch.get("seen", []) + [item["id"] for item in leads]))[-500:]
+    record_generic_observation(watch, "ok", len(leads), len(fresh))
     last = watch.get("last_notified_at")
     if last and (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds() < 12 * 3600:
         return ""
@@ -800,22 +823,30 @@ def manage(data, fetch=fetch_page, search=search_news, runtime=None, product_sea
     with locked() as state:
         watches, profile = state["price_watches"], state["news"]
         generic = state.setdefault("generic_watches", [])
+        for item in generic:
+            ensure_generic_fields(item)
         if action == "add_watch":
             if data.get("opt_in") is not True:
                 raise WatchError("Só ativo avisos depois do seu pedido explícito.")
             category, label, query = data.get("category"), data.get("label"), data.get("query")
+            condition = data.get("condition", "novo resultado público que corresponda à busca")
             if category not in CATEGORIES or not isinstance(label, str) or not isinstance(query, str) or not 3 <= len(label.strip()) <= 100 or not 4 <= len(query.strip()) <= 180:
                 raise WatchError("Diga o que acompanhar e a busca específica para encontrar novidades.")
+            if not isinstance(condition, str) or not 3 <= len(condition.strip()) <= 200:
+                raise WatchError("Qual condição deve gerar um aviso?")
             ident = hashlib.sha256((category + "|" + query.casefold().strip()).encode()).hexdigest()[:12]
             existing = next((w for w in generic if w["id"] == ident and w["status"] == "active"), None)
             if existing: return {"status": "exists", "watch": existing}
             # A real baseline prevents old search hits from being announced as new.
             watch = {"id": ident, "category": category, "label": label.strip(), "query": query.strip(),
+                     "condition": condition.strip(), "cadence": "twice_daily",
                      "status": "active", "created_at": now(), "last_checked_at": None,
-                     "last_notified_at": None, "baseline_ready": False, "seen": []}
+                     "last_notified_at": None, "last_observation": None, "history": [],
+                     "baseline_ready": False, "seen": []}
             baseline = generic_results(watch, search_web if search is search_news else search)
             watch["seen"] = [item["id"] for item in baseline]
             watch["baseline_ready"] = bool(baseline)
+            record_generic_observation(watch, "baseline" if baseline else "ok", len(baseline))
             sync_job("generic", True, "41 9,18 * * *", runtime=runtime)
             generic.append(watch)
             save_state(state)

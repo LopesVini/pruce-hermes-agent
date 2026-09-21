@@ -54,16 +54,25 @@ class WatchTests(unittest.TestCase):
         old = [{'title': 'Estágio UFMG laboratório 2026', 'url': 'https://example.org/jobs/1'}]
         new = old + [{'title': 'Nova bolsa UFMG laboratório 2026', 'url': 'https://example.org/jobs/2'}]
         data = {'action': 'add_watch', 'opt_in': True, 'category': 'estágio',
-                'label': 'Estágios UFMG', 'query': 'estágio laboratório UFMG Belo Horizonte'}
+                'label': 'Estágios UFMG', 'query': 'estágio laboratório UFMG Belo Horizonte',
+                'condition': 'vaga nova com inscrição aberta'}
         with patch.object(watch, 'sync_job') as cron:
             with self.assertRaises(watch.WatchError):
                 watch.manage({**data, 'opt_in': False}, search=lambda _: old)
             created = watch.manage(data, search=lambda _: old)
             self.assertEqual(created['status'], 'active')
+            stored = watch.manage({'action': 'list'})['generic_watches'][0]
+            self.assertEqual(stored['condition'], 'vaga nova com inscrição aberta')
+            self.assertEqual(stored['cadence'], 'twice_daily')
+            self.assertEqual(stored['last_observation']['outcome'], 'baseline')
+            self.assertEqual(len(stored['history']), 1)
             self.assertEqual(watch.manage(data, search=lambda _: old)['status'], 'exists')
             self.assertEqual(len(watch.manage({'action': 'list'})['generic_watches']), 1)
             self.assertEqual(watch.tick('generic', search=lambda _: old), '')
             self.assertIn('Nova bolsa', watch.tick('generic', search=lambda _: new))
+            observed = watch.manage({'action': 'list'})['generic_watches'][0]
+            self.assertEqual(observed['last_observation']['new_count'], 1)
+            self.assertEqual(len(observed['history']), 3)
             self.assertEqual(watch.tick('generic', search=lambda _: new), '')
             self.assertEqual(watch.manage({'action': 'cancel_watch', 'id': created['id']})['status'], 'cancelled')
             self.assertEqual(watch.tick('generic', search=lambda _: new), '')
@@ -75,9 +84,22 @@ class WatchTests(unittest.TestCase):
         with patch.object(watch, 'sync_job'):
             watch.manage(data, search=lambda _: [])
             self.assertEqual(watch.tick('generic', search=lambda _: (_ for _ in ()).throw(OSError('secret'))), '')
+            failed = watch.manage({'action': 'list'})['generic_watches'][0]
+            self.assertEqual(failed['last_observation']['outcome'], 'unavailable')
+            self.assertTrue(failed['history'])
             first = [{'title': 'Edital UFMG 2026 aberto', 'url': 'https://ufmg.br/edital/1'}]
             self.assertEqual(watch.tick('generic', search=lambda _: first), '')
             self.assertEqual(watch.tick('generic', search=lambda _: first), '')
+
+    def test_legacy_generic_watch_gains_additive_observation_fields(self):
+        legacy = {'id': 'old', 'category': 'outro', 'label': 'Release público',
+                  'query': 'software release notes', 'status': 'active',
+                  'baseline_ready': True, 'seen': [], 'last_notified_at': None}
+        self.assertEqual(watch.check_generic(legacy, search=lambda _: []), '')
+        self.assertEqual(legacy['condition'], 'novo resultado público que corresponda à busca')
+        self.assertEqual(legacy['cadence'], 'twice_daily')
+        self.assertEqual(legacy['last_observation']['result_count'], 0)
+        self.assertEqual(len(legacy['history']), 1)
 
     def test_structured_price_brl_and_metadata(self):
         value = watch.extract_product(HTML, URL)
