@@ -12,6 +12,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 FILES = (
     "tests/test_watch.py", "skills/pruce-watch/SKILL.md", "skills/pruce-watch/scripts/watch.py",
+    "skills/pruce-research/SKILL.md",
     "tests/test_google_workspace.py",
     "tests/test_whatsapp.py", "image/whatsapp_init.py", "whatsapp.env.example",
     "tests/test_ru_delivery.py", "image/patch_ru_delivery.py",

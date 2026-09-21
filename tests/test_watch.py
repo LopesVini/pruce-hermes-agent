@@ -44,6 +44,35 @@ class WatchTests(unittest.TestCase):
         safe.sensitive_query_param_name = lambda value: None
         self.enterContext(patch.dict(sys.modules, {'tools.url_safety': safe}))
 
+    def test_generic_watch_opt_in_baseline_dedupe_quiet_and_cancel(self):
+        old = [{'title': 'Estágio UFMG laboratório 2026', 'url': 'https://example.org/jobs/1'}]
+        new = old + [{'title': 'Nova bolsa UFMG laboratório 2026', 'url': 'https://example.org/jobs/2'}]
+        data = {'action': 'add_watch', 'opt_in': True, 'category': 'estágio',
+                'label': 'Estágios UFMG', 'query': 'estágio laboratório UFMG Belo Horizonte'}
+        with patch.object(watch, 'sync_job') as cron:
+            with self.assertRaises(watch.WatchError):
+                watch.manage({**data, 'opt_in': False}, search=lambda _: old)
+            created = watch.manage(data, search=lambda _: old)
+            self.assertEqual(created['status'], 'active')
+            self.assertEqual(watch.manage(data, search=lambda _: old)['status'], 'exists')
+            self.assertEqual(len(watch.manage({'action': 'list'})['generic_watches']), 1)
+            self.assertEqual(watch.tick('generic', search=lambda _: old), '')
+            self.assertIn('Nova bolsa', watch.tick('generic', search=lambda _: new))
+            self.assertEqual(watch.tick('generic', search=lambda _: new), '')
+            self.assertEqual(watch.manage({'action': 'cancel_watch', 'id': created['id']})['status'], 'cancelled')
+            self.assertEqual(watch.tick('generic', search=lambda _: new), '')
+            self.assertEqual(cron.call_args.args[:2], ('generic', False))
+
+    def test_generic_search_failure_and_empty_baseline_do_not_alert(self):
+        data = {'action': 'add_watch', 'opt_in': True, 'category': 'concurso',
+                'label': 'Concurso UFMG', 'query': 'site:ufmg.br concurso 2026'}
+        with patch.object(watch, 'sync_job'):
+            watch.manage(data, search=lambda _: [])
+            self.assertEqual(watch.tick('generic', search=lambda _: (_ for _ in ()).throw(OSError('secret'))), '')
+            first = [{'title': 'Edital UFMG 2026 aberto', 'url': 'https://ufmg.br/edital/1'}]
+            self.assertEqual(watch.tick('generic', search=lambda _: first), '')
+            self.assertEqual(watch.tick('generic', search=lambda _: first), '')
+
     def test_structured_price_brl_and_metadata(self):
         value = watch.extract_product(HTML, URL)
         self.assertEqual((value['price'], value['currency'], value['name']), (1899.90, 'BRL', 'AirPods Pro'))
@@ -218,6 +247,18 @@ class NativeWatchTests(unittest.TestCase):
             ok, document, delivered, error = self.scheduler._run_no_agent_job(job, job['id'], 'pruce-price-watch', None)
         self.assertTrue(ok)
         self.assertEqual(delivered, self.scheduler.SILENT_MARKER)
+
+    def test_generic_native_job_is_single_and_cancellable(self):
+        runtime = (self.jobs, self.scheduler, self.clock)
+        watch.sync_job('generic', True, '41 9,18 * * *', runtime=runtime)
+        first = self.jobs.load_jobs()[0]
+        self.assertEqual(first['name'], 'pruce-generic-watch')
+        self.assertEqual(first['deliver'], 'imessage:synthetic-owner')
+        self.assertTrue((self.home / 'scripts/pruce-generic-watch.py').exists())
+        watch.sync_job('generic', True, '41 9,18 * * *', runtime=runtime)
+        self.assertEqual([j['id'] for j in self.jobs.load_jobs()], [first['id']])
+        watch.sync_job('generic', False, None, runtime=runtime)
+        self.assertEqual(self.jobs.load_jobs(), [])
 
 
 if __name__ == '__main__': unittest.main()

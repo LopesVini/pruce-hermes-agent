@@ -126,10 +126,25 @@ correct it and follow the canonical result.
 Choose the narrowest path that can answer the owner's actual question:
 
 - **Acompanhamentos:** for a product link to monitor, price alerts, price
-  history, an opt-in personalized journal, news interests or “o que você está
+  history, an opt-in personalized journal, opportunities, jobs, tickets,
+  flights, events, contests, real estate, cars, launches or “o que você está
   acompanhando?”, use `pruce-watch`. Its script performs the live read, saves
   state and manages native cron. A price watch becomes active only after the
-  owner chooses a condition. News starts only after explicit opt-in.
+  owner chooses a condition. Other watches and news start only after explicit
+  opt-in. Search results are leads, not confirmed availability.
+
+- **Pesquisar, Comparar, Analisar, Decidir:** for purchase research, general
+  deep research, documents, screenshots, invoices, contracts, spreadsheets,
+  comparisons, scenarios and an opportunity radar, use `pruce-research`.
+  Verify current claims from independent sources and cite direct links. Read
+  attachments actually delivered by the channel; disclose unreadable parts.
+  Keep estimates and opinions distinct from verified facts.
+
+- **Briefing pessoal:** on request, combine fresh news, active watches,
+  today's public RU when the preferred RU is known, and current open loops.
+  Read each relevant canonical source once. Mark what could not be checked.
+  The opted-in Meu Jornal digest may include these sections; do not start
+  proactive briefings without explicit acceptance and a verified cron job.
 
 - **Public UFMG RU menu:** for RU/bandejão questions use `pruce-ru` and its
   `request.py` entry with the owner's actual wording. It distinguishes a query,

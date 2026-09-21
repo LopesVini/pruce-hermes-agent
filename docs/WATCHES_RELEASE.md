@@ -1,4 +1,4 @@
-# Prucê accompaniments — isolated release candidate
+# Prucê unified web release
 
 ## Audit of the current cloud image
 
@@ -7,6 +7,10 @@ Inspected the official Plow base pinned by `dbfec58` inside the reference
 `web_extract_tool`, `tools.url_safety.create_ssrf_safe_client`, native
 `cron.jobs`/`cron.scheduler`/provider registration, and live delivery through
 the originating chat. The existing RU adapter demonstrates that contract.
+The native file reader extracts PDF, DOCX and XLSX, and Hermes includes image
+vision for attachments actually delivered to its gateway. This release uses
+those native tools through `pruce-research`; it does not bundle an OCR service
+or promise that every inbound channel forwards every format.
 The home volume is persistent and isolated per deployment; Prucê's canonical
 task state is `/var/lib/hermes/pruce/state.json`.
 
@@ -23,12 +27,17 @@ is parsed locally. Neither route needs Mac, Latch, or a new credential.
 
 ## Implementation
 
-`pruce-watch` is one conversational route for price watches and an opt-in news
+`pruce-watch` is one conversational route for price watches, generic public-web
+watches and an opt-in news
 journal. State is `/var/lib/hermes/pruce/watches.json`, written atomically
 under a lock. This file is separate from the established task/RU state and
 inside the same isolated deployment volume. Active jobs are named and marked
 `pruce-price-watch`, `pruce-news-digest`, and `pruce-news-important`.
-Repeated edits update an existing native job; cancellation removes only jobs
+Generic watches have an additional `pruce-generic-watch` job. A live search
+seeds each watch, then twice-daily checks compare URLs. Alerts include at most
+three links and are capped at one per watch every twelve hours. Failed or empty
+searches never generate a false alert; results remain leads to verify, not
+confirmed offers or availability. Repeated edits update an existing native job; cancellation removes only jobs
 matching all three of its name, runner script, and marker. Runners read the
 installed current skill code after image upgrades. No new scheduler or
 messaging service was introduced.
@@ -47,6 +56,18 @@ deduplicated against this edition and the previous 500 delivered stories. A
 quiet search produces no scheduled message. A requested immediate digest
 reports that nothing new was found instead. The last 1–6 stories are saved for
 conversational follow-up.
+The chosen news digest adds current watch labels, open-loop titles and a live
+RU menu when a preferred RU and current menu are available. If there is no
+new verifiable news, the scheduled digest remains quiet. An on-demand briefing
+can still combine these sources whenever the owner requests it.
+
+`pruce-research` provides five conversational verbs: Pesquisar, Comparar,
+Analisar, Acompanhar and Decidir. Research checks multiple independent pages,
+separates evidence from opinion and cites URLs. Document analysis uses native
+Hermes extraction/vision and must acknowledge missing or unreadable material.
+Comparisons and scenarios expose assumptions and costs. The opportunity radar
+researches official UFMG/employer/program pages on demand; a recurring radar
+uses the generic watch only after explicit opt-in.
 
 Cron output is rendered without the native diagnostic header only for the
 exact opted-in Prucê RU or watch records. All other Hermes jobs retain their
@@ -60,6 +81,11 @@ owner home mounted. Public network smoke tests use a disposable container:
 Books to Scrape's product page returned *A Light in the Attic*, GBP 51.77;
 an immediate UFMG journal produced dated public stories and persisted their
 IDs in a temporary home. No existing deployment or iMessage user was touched.
+For this unified release, a live Hermes search returned UFMG results and
+`web_extract` read the UFMG home page. In a disposable linux/amd64 container,
+native document extraction read generated DOCX, PDF and XLSX samples with a
+value and due date. Native cron tests created, updated and removed the generic
+job in an isolated store; they did not send to a real handset.
 
 Store blocking, client-rendered prices, currency ambiguity and redirects can
 prevent automated price reading. Google News RSS links can be long and lead

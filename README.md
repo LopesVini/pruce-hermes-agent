@@ -39,9 +39,11 @@ Examples:
 The status values are internal. The owner gets a natural conversation, not a
 Kanban board or a numerical priority score.
 
-Prucê also offers opt-in proactive RU delivery, price watches, and a personal
-news journal. These use native cloud cron and the deployment's private home;
-they run while the owner's phone or computer is offline. Other task follow-ups
+Prucê also offers purchase and general web research, document analysis,
+structured comparisons and decision scenarios. Owners can opt in to proactive
+RU delivery, price watches, generic public-web watches and a personal news
+briefing. These use native cloud cron and the deployment's private home; they
+run while the owner's phone or computer is offline. Other task follow-ups
 remain on demand. No Google, browser, or Latch account is bundled with the
 image. WhatsApp, a dashboard, and a multi-tenant service are outside this release.
 See [accompaniments](docs/WATCHES_RELEASE.md) for source and delivery limits.
@@ -80,6 +82,9 @@ the cloud-compatible base validated for this release; that base also pins its co
 - `pruce-sources` keeps a separate source and coverage map;
 - `pruce-triage` handles prioritization, life scans, progressive permissions,
   and capability discovery;
+- `pruce-research` guides evidence-based purchase/general research, attachment
+  analysis, comparison, opportunity discovery and decision scenarios;
+- `pruce-watch` owns price, news and generic web watches with native cron;
 - a named Docker volume persists Hermes memory and Prucê state;
 - the official Agent Index client is pinned by commit and checksum and runs as
   an s6 service when enabled.

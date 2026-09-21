@@ -22,7 +22,10 @@ HOME = Path(os.environ.get("HERMES_HOME", "/var/lib/hermes"))
 STATE = HOME / "pruce/watches.json"
 JOBS = {"price": ("pruce-price-watch", "pruce-price-watch.py", "pruce_price_v1"),
         "news": ("pruce-news-digest", "pruce-news-digest.py", "pruce_news_v1"),
-        "important": ("pruce-news-important", "pruce-news-important.py", "pruce_news_important_v1")}
+        "important": ("pruce-news-important", "pruce-news-important.py", "pruce_news_important_v1"),
+        "generic": ("pruce-generic-watch", "pruce-generic-watch.py", "pruce_generic_v1")}
+CATEGORIES = {"produto", "passagem", "evento", "ingresso", "concurso", "vaga",
+              "imóvel", "carro", "lançamento", "bolsa", "estágio", "hackathon", "outro"}
 
 
 class WatchError(ValueError):
@@ -163,7 +166,7 @@ def extract_product(html, url):
 
 
 def default_state():
-    return {"version": 1, "price_watches": [], "news": {"enabled": False, "interests": [],
+    return {"version": 1, "price_watches": [], "generic_watches": [], "news": {"enabled": False, "interests": [],
             "schedule": None, "timezone": None, "last_digest_at": None, "delivered": [],
             "delivered_titles": [], "last_stories": []}}
 
@@ -383,6 +386,14 @@ def search_news(query):
     return results
 
 
+def search_web(query):
+    from tools.web_tools import web_search_tool
+    result = json.loads(web_search_tool(query, limit=12))
+    if not result.get("success"):
+        raise WatchError("A busca web não está disponível nesta instalação agora.")
+    return result.get("data", {}).get("web", [])
+
+
 def collect_news(profile, search=search_news, important=False, today=None):
     today = today or datetime.now(timezone.utc)
     candidates, seen, stories, sources = [], set(profile["delivered"]), [], set()
@@ -433,6 +444,76 @@ def render_news(stories):
     return "\n\n".join(lines)
 
 
+def briefing_context(state):
+    """Best-effort current context for an opted-in news digest; no extra alert."""
+    sections = []
+    active = [w["label"] for w in state.get("generic_watches", []) if w["status"] == "active"][:4]
+    if active:
+        sections.append("Acompanhando: " + ", ".join(active) + ".")
+    try:
+        import importlib.util
+        path = HOME / "skills/pruce-tasks/scripts/state.py"
+        spec = importlib.util.spec_from_file_location("pruce_state_for_briefing", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        current = module.run(HOME / "pruce/state.json", "active")
+        tasks = current.get("tasks", []) if isinstance(current, dict) else []
+        if tasks:
+            sections.append("Pendências: " + "; ".join(str(t.get("title", ""))[:80] for t in tasks[:3]) + ".")
+        preferred = (current.get("profile") or {}).get("preferred_ru") if isinstance(current, dict) else None
+        if preferred:
+            ru_path = HOME / "skills/pruce-ru/scripts/menu.py"
+            ru_spec = importlib.util.spec_from_file_location("pruce_menu_for_briefing", ru_path)
+            ru = importlib.util.module_from_spec(ru_spec)
+            ru_spec.loader.exec_module(ru)
+            menu = ru.query(ru=preferred, when="hoje", meal="almoço")
+            if isinstance(menu, dict) and menu.get("status") == "ok":
+                sections.append("RU hoje: " + str(menu.get("text", ""))[:500])
+    except Exception as error:
+        LOG.warning("briefing_context_unavailable type=%s", type(error).__name__)
+    return "\n".join(sections)
+
+
+def generic_results(watch, search=search_news):
+    """Bounded public search; a result is a lead, never a verified offer."""
+    results = search(watch["query"])
+    leads = []
+    for item in results[:12]:
+        url = canonical_story(item.get("url") or item.get("href"))
+        title = str(item.get("title") or "").strip()[:180]
+        if url and len(title) >= 8:
+            leads.append({"id": hashlib.sha256(url.encode()).hexdigest()[:20],
+                          "title": title, "url": url, "source": str(item.get("source") or urlsplit(url).hostname)[:100]})
+    return list({item["id"]: item for item in leads}.values())
+
+
+def check_generic(watch, search=search_news):
+    try:
+        leads = generic_results(watch, search)
+    except Exception as error:
+        LOG.warning("generic_search_error watch=%s type=%s", watch["id"], type(error).__name__)
+        return ""
+    watch["last_checked_at"] = now()
+    if not leads:
+        return ""
+    if not watch.get("baseline_ready"):
+        watch["seen"] = [item["id"] for item in leads]
+        watch["baseline_ready"] = True
+        return ""
+    seen = set(watch.get("seen", []))
+    fresh = [item for item in leads if item["id"] not in seen][:3]
+    watch["seen"] = list(dict.fromkeys(watch.get("seen", []) + [item["id"] for item in leads]))[-500:]
+    last = watch.get("last_notified_at")
+    if last and (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds() < 12 * 3600:
+        return ""
+    if not fresh:
+        return ""
+    watch["last_notified_at"] = now()
+    lines = [f"👀 Novos resultados para {watch['label']} (confira os detalhes na fonte):"]
+    lines += [f"• {item['title']} — {item['source']}\n{item['url']}" for item in fresh]
+    return "\n".join(lines)
+
+
 def tick(kind, fetch=fetch_page, search=search_news):
     with locked() as state:
         messages = []
@@ -447,11 +528,17 @@ def tick(kind, fetch=fetch_page, search=search_news):
             if profile["enabled"] and mode == ("important" if kind == "important" else "digest"):
                 stories = collect_news(profile, search, important=kind == "important")
                 if stories:
-                    messages.append(render_news(stories))
+                    context = briefing_context(state) if kind == "news" else ""
+                    messages.append(render_news(stories) + ("\n\n" + context if context else ""))
                     profile["delivered"] = (profile["delivered"] + [s["id"] for s in stories])[-500:]
                     profile["delivered_titles"] = (profile.get("delivered_titles", []) + [s["title"] for s in stories])[-500:]
                     profile["last_stories"] = stories
                     profile["last_digest_at"] = now()
+        elif kind == "generic":
+            for watch in state.get("generic_watches", []):
+                if watch["status"] == "active":
+                    message = check_generic(watch, search_web if search is search_news else search)
+                    if message: messages.append(message)
         save_state(state)
     return "\n\n".join(messages)
 
@@ -460,6 +547,40 @@ def manage(data, fetch=fetch_page, search=search_news, runtime=None):
     action = data.get("action")
     with locked() as state:
         watches, profile = state["price_watches"], state["news"]
+        generic = state.setdefault("generic_watches", [])
+        if action == "add_watch":
+            if data.get("opt_in") is not True:
+                raise WatchError("Só ativo avisos depois do seu pedido explícito.")
+            category, label, query = data.get("category"), data.get("label"), data.get("query")
+            if category not in CATEGORIES or not isinstance(label, str) or not isinstance(query, str) or not 3 <= len(label.strip()) <= 100 or not 4 <= len(query.strip()) <= 180:
+                raise WatchError("Diga o que acompanhar e a busca específica para encontrar novidades.")
+            ident = hashlib.sha256((category + "|" + query.casefold().strip()).encode()).hexdigest()[:12]
+            existing = next((w for w in generic if w["id"] == ident and w["status"] == "active"), None)
+            if existing: return {"status": "exists", "watch": existing}
+            # A real baseline prevents old search hits from being announced as new.
+            watch = {"id": ident, "category": category, "label": label.strip(), "query": query.strip(),
+                     "status": "active", "created_at": now(), "last_checked_at": None,
+                     "last_notified_at": None, "baseline_ready": False, "seen": []}
+            baseline = generic_results(watch, search_web if search is search_news else search)
+            watch["seen"] = [item["id"] for item in baseline]
+            watch["baseline_ready"] = bool(baseline)
+            sync_job("generic", True, "41 9,18 * * *", runtime=runtime)
+            generic.append(watch)
+            save_state(state)
+            return {"status": "active", "id": ident, "text": f"Vou acompanhar {watch['label']} e avisar quando encontrar um resultado novo, com o link da fonte."}
+        if action in ("check_watch", "cancel_watch"):
+            selector = data.get("id") or data.get("label")
+            matches = [w for w in generic if w["status"] == "active" and selector and (w["id"] == selector or selector.casefold() in w["label"].casefold())]
+            if len(matches) != 1: raise WatchError("Qual acompanhamento? Peça a lista ou informe o nome.")
+            watch = matches[0]
+            if action == "cancel_watch":
+                watch["status"] = "cancelled"
+                if not any(w["status"] == "active" for w in generic): sync_job("generic", False, None, runtime=runtime)
+                result = {"status": "cancelled", "text": f"Parei de acompanhar {watch['label']}."}
+            else:
+                result = {"status": "ok", "text": check_generic(watch, search_web if search is search_news else search) or "Não encontrei novidade verificável agora.", "watch": watch}
+            save_state(state)
+            return result
         if action == "inspect_price":
             url = clean_url(data.get("url"))
             product = extract_product(fetch(url), url)
@@ -492,6 +613,7 @@ def manage(data, fetch=fetch_page, search=search_news, runtime=None):
             return {"status": "active", "text": f"Vou acompanhar {watch['name']} e avisar quando cumprir sua condição."}
         if action == "list":
             return {"status": "ok", "price_watches": [w for w in watches if w["status"] == "active"],
+                    "generic_watches": [w for w in generic if w["status"] == "active"],
                     "news": {"enabled": profile["enabled"], "interests": profile["interests"], "schedule": profile["schedule"]}}
         if action == "price_status":
             watch = find_watch(state, data.get("product"))
