@@ -22,12 +22,22 @@ PRUCE_WATCH_JSON
 
 ## Prices
 
-On a request to monitor a product, call `inspect_price` with its actual URL.
-It reads the live page, persists a pending watch and returns the found price
-plus a question about the condition. If the source cannot be read, relay its
-honest failure; do not create an active watch or use a search snippet as a
-confirmed price. For a natural follow-up such as “abaixo de 1600”, “se cair
-10%”, or “qualquer queda”, call `set_price` with `target_type` equal to
+With a product URL, call `inspect_price` using that URL. Without one, identify
+the exact product from the request or unambiguous conversation context and call
+`discover_price` with `query` such as `AirPods Pro 3`. If “esse produto” has no
+clear antecedent, ask which product. The script searches, opens candidate
+stores, verifies prices on their pages, and returns numbered offers. A search
+snippet alone is never a confirmed price. If none can be verified, relay the
+failure and do not claim a watch exists.
+
+Ask whether to follow `lowest` (the minimum across found stores), `stores`
+(named merchants) or `all` (every valid offer). Use `select_price` with
+`selection_mode` and, for specific stores, `stores: ["merchant name"]`. “Acompanha
+o mais barato” means `lowest`. If the initial request already includes a price
+condition, carry it into `set_price` after selection; otherwise ask. The
+direct-link route still persists a pending watch and asks only for a condition.
+For a natural follow-up such as “abaixo de 1600”, “se cair 10%”, or “qualquer
+queda”, call `set_price` with `target_type` equal to
 `absolute`, `percentage`, or `any`, and the respective `target_price` or
 `target_percentage`. Include `product` only when needed to distinguish watches.
 The script captures the trusted current DM destination. Do not provide a
@@ -36,9 +46,11 @@ The script captures the trusted current DM destination. Do not provide a
 Use `price_status` for history, `check_price` to recheck now, `cancel_price`
 to stop, `set_price` to edit, and `list` for “o que acompanha?”. If there are
 multiple watches and the product is unclear, ask which one. Quote the watch's
-own observed minimum only as “menor preço que vi desde que comecei”. A check
-that cannot read the page is unavailable, never zero. Any price prediction is
-uncertain; research context when asked, without guaranteeing a future fall.
+own observed minimum only as “menor preço que vi desde que comecei”. A failed
+store page becomes unavailable while other stores remain active, never zero.
+Multistore discovery of new offers is bounded to once per 72 hours. Any price
+prediction is uncertain; research context when asked, without guaranteeing a
+future fall.
 
 ## News
 
@@ -62,6 +74,10 @@ substitute an earlier digest or a story from memory. The scheduled script
 uses official Hermes web search, recent dated results and deterministic
 deduplication; it sends headlines, source, date and URLs without claiming
 details it has not verified.
+The digest first reserves one story for each interest with distinct recent
+content, then fills up to six in balanced rounds. RSS items use direct
+publisher links when verified by a matching search result; otherwise they
+retain the Google News link.
 
 For a combined status, `list` returns active price watches and news interests.
 Summarize both in one natural answer. Do not announce tool internals.

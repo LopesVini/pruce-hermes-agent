@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -156,6 +157,22 @@ def extract_product(html, url):
         if match and money(match.group(2)):
             candidates.append((money(match.group(2)), {"£": "GBP", "€": "EUR", "$": "USD", "R$": "BRL"}[match.group(1)], None))
     if not candidates:
+        match = re.search(r'"productVariant"\s*:\s*\{\s*"price"\s*:\s*\{\s*"amount"\s*:\s*([\d.]+)\s*,\s*"currencyCode"\s*:\s*"([A-Z]{3})"', html)
+        if match and money(match.group(1)) and page.heading:
+            candidates.append((money(match.group(1)), match.group(2), page.heading))
+    if not candidates:
+        match = re.search(r'Viewed Product"\s*,\s*(\{.{0,1500}?\})\s*,\s*undefined', html, re.S)
+        if match:
+            try:
+                event = json.loads(match.group(1))
+                if event.get("available") is True and money(event.get("price")):
+                    candidates.append((money(event["price"]), event.get("currency"), event.get("name") or page.heading))
+            except (ValueError, TypeError, KeyError): pass
+    if not candidates:
+        match = re.search(r'<h[1-6][^>]{0,200}class=["\'][^"\']*\bprice\b[^"\']*["\'][^>]*>\s*(R\$|[£€$])\s*([\d.,]+)', html, re.I)
+        if match and money(match.group(2)) and page.heading:
+            candidates.append((money(match.group(2)), {"R$": "BRL", "£": "GBP", "€": "EUR", "$": "USD"}[match.group(1)], page.heading))
+    if not candidates:
         raise WatchError("Não consegui acompanhar automaticamente o preço nessa loja ainda.")
     price, currency, name = candidates[0]
     currency = (currency or ("BRL" if "R$" in html else "")).upper()
@@ -163,6 +180,103 @@ def extract_product(html, url):
         raise WatchError("Encontrei um valor, mas não consegui confirmar a moeda.")
     return {"name": unescape(str(name or meta.get("og:title") or page.heading or page.title)).strip()[:180],
             "merchant": urlsplit(url).hostname, "currency": currency, "price": price}
+
+
+def product_tokens(value):
+    value = re.sub(r"(?<=\d)[ªº]", "", str(value).casefold())
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(c for c in value if not unicodedata.combining(c))
+    stop = {"a", "o", "de", "do", "da", "dos", "das", "um", "uma", "para", "por",
+            "preco", "produto", "comprar", "acompanhar", "acompanhe", "olho", "fica",
+            "apple", "fone", "ouvido", "geracao", "novo", "original", "lacrado"}
+    return [token for token in re.findall(r"[a-z0-9]+", value) if token not in stop]
+
+
+def product_matches(query, name):
+    wanted = set(product_tokens(query))
+    found = set(product_tokens(name))
+    if not wanted or not wanted <= found:
+        return False
+    # A matching device name in an accessory listing is still the wrong item.
+    accessory = {"capa", "case", "capinha", "protetor", "pelicula", "cabo",
+                 "carregador", "suporte", "compativel", "replica", "clone", "peca"}
+    return not bool(accessory & found)
+
+
+def search_products(query):
+    """Official Hermes search first; a bounded public RSS search is a fallback."""
+    from tools.web_tools import web_search_tool
+    try:
+        result = json.loads(web_search_tool(query, limit=12))
+        if result.get("success") and result.get("data", {}).get("web"):
+            return result["data"]["web"][:12]
+    except Exception:
+        pass
+    from tools.url_safety import create_ssrf_safe_client
+    url = "https://www.bing.com/search?" + urlencode({"format": "rss", "q": query[:160]})
+    with create_ssrf_safe_client(timeout=8.0, follow_redirects=False) as client:
+        response = client.get(url, headers={"User-Agent": "PrucePriceWatch/1.0"})
+        response.raise_for_status()
+        if len(response.content) > 500_000: raise WatchError("Pesquisa de ofertas grande demais.")
+    root = ElementTree.fromstring(response.content)
+    return [{"title": item.findtext("title") or "", "url": item.findtext("link") or ""}
+            for item in root.findall("./channel/item")[:12]]
+
+
+def discover_offers(query, fetch=fetch_page, search=search_products, max_checks=10, extra_query=True):
+    if not isinstance(query, str) or not 2 <= len(query.strip()) <= 120 or not product_tokens(query):
+        raise WatchError("Qual é o nome exato do produto que você quer acompanhar?")
+    query = query.strip()
+    offers, seen_urls, checked, seen_domains, domain_attempts = [], set(), 0, set(), {}
+    searches = [f'"{query}" loja independente comprar Brasil']
+    if extra_query:
+        searches.extend((f'"{query}" comprar preço Brasil site:com.br',
+                         f'"{query}" comprar preço Brasil'))
+    for search_index, search_query in enumerate(searches):
+        checked_this_search = 0
+        search_budget = max_checks if len(searches) == 1 else max(2, max_checks // 3 + (search_index == 0))
+        try: results = search(search_query)
+        except Exception as error:
+            LOG.warning("product_search_error query_hash=%s type=%s", hashlib.sha256(query.encode()).hexdigest()[:10], type(error).__name__)
+            continue
+        for result in results[:12]:
+            if checked >= max_checks or checked_this_search >= search_budget: break
+            try: url = clean_url(result.get("url") or result.get("href"))
+            except (WatchError, ValueError, TypeError): continue
+            domain = urlsplit(url).hostname.removeprefix("www.")
+            if any(domain == excluded or domain.endswith("." + excluded) for excluded in
+                   ("buscape.com.br", "zoom.com.br", "promobit.com.br", "reclameaqui.com.br",
+                    "jacotei.com.br", "busqa.com.br")):
+                continue
+            if url in seen_urls or domain_attempts.get(domain, 0) >= 3: continue
+            # Search snippets are candidate discovery only, never price evidence.
+            title = result.get("title") or ""
+            if not product_matches(query, title): continue
+            if re.search(r"\b(?:review|revis[aã]o|comparativo|compare|versus|guia|not[ií]cias|melhores)\b|\s+vs\.?\s+", title, re.I):
+                continue
+            seen_urls.add(url)
+            domain_attempts[domain] = domain_attempts.get(domain, 0) + 1
+            checked += 1
+            checked_this_search += 1
+            try:
+                product = extract_product(fetch(url), url)
+                if not product_matches(query, product["name"]): continue
+                if (domain, product["currency"]) in seen_domains: continue
+            except Exception as error:
+                LOG.info("offer_read_unavailable domain_hash=%s type=%s", hashlib.sha256(domain.encode()).hexdigest()[:10], type(error).__name__)
+                continue
+            offers.append({"id": hashlib.sha256(url.encode()).hexdigest()[:12], "url": url,
+                           "name": product["name"], "merchant": domain,
+                           "currency": product["currency"], "initial_price": product["price"],
+                           "last_price": product["price"], "status": "available",
+                           "last_checked_at": now()})
+            seen_domains.add((domain, product["currency"]))
+        if len(offers) >= 3 or checked >= max_checks: break
+    if not offers: return []
+    # Prices in different currencies cannot be compared as a single minimum.
+    currency = "BRL" if any(o["currency"] == "BRL" for o in offers) else offers[0]["currency"]
+    offers = [o for o in offers if o["currency"] == currency]
+    return sorted(offers, key=lambda o: (o["last_price"], o["merchant"]))[:6]
 
 
 def default_state():
@@ -307,7 +421,80 @@ def important_schedule(user_zone, runtime=None):
     return f"{parts[0][0]} {','.join(part[1] for part in parts)} * * *"
 
 
-def check_price(watch, fetch=fetch_page):
+def selected_offers(watch):
+    offers = watch.get("offers", [])
+    if watch.get("selection_mode") == "stores":
+        selected = set(watch.get("selected_offer_ids", []))
+        return [offer for offer in offers if offer["id"] in selected]
+    return offers
+
+
+def check_multi_price(watch, fetch=fetch_page, search=search_products):
+    previous = watch["last_price"]
+    for offer in selected_offers(watch):
+        try:
+            product = extract_product(fetch(offer["url"]), offer["url"])
+            if product["currency"] != watch["currency"] or not product_matches(watch["query"], product["name"]):
+                raise WatchError("A página deixou de corresponder ao produto acompanhado.")
+            offer["last_price"] = product["price"]
+            offer["status"] = "available"
+        except Exception as error:
+            offer["status"] = "unavailable"
+            LOG.warning("price_offer_unavailable watch=%s offer=%s type=%s", watch["id"], offer["id"], type(error).__name__)
+        offer["last_checked_at"] = now()
+    last_discovery = watch.get("last_discovery_at")
+    try:
+        old = datetime.fromisoformat(last_discovery) if last_discovery else datetime.min.replace(tzinfo=timezone.utc)
+    except ValueError:
+        old = datetime.min.replace(tzinfo=timezone.utc)
+    if (watch.get("selection_mode") != "stores" and datetime.now(timezone.utc) - old >= timedelta(hours=72)
+            and len(watch["offers"]) < 6):
+        watch["last_discovery_at"] = now()  # also rate-limits failed discovery
+        try:
+            discovered = discover_offers(watch["query"], fetch, search, max_checks=6, extra_query=False)
+            known = {offer["id"] for offer in watch["offers"]}
+            merchants = {offer["merchant"] for offer in watch["offers"]}
+            for offer in discovered:
+                if offer["id"] not in known and offer["merchant"] not in merchants and offer["currency"] == watch["currency"]:
+                    watch["offers"].append(offer)
+                    known.add(offer["id"])
+                    merchants.add(offer["merchant"])
+                    if len(watch["offers"]) >= 6: break
+        except Exception as error:
+            LOG.warning("price_discovery_error watch=%s type=%s", watch["id"], type(error).__name__)
+    available = [offer for offer in selected_offers(watch) if offer["status"] == "available"]
+    watch["last_checked_at"] = now()
+    if not available:
+        LOG.info("price_check watch=%s offers_available=0 alert=False", watch["id"])
+        return ""
+    cheapest = min(available, key=lambda offer: offer["last_price"])
+    price = cheapest["last_price"]
+    if price != previous:
+        watch["last_price"] = price
+        watch["lowest_seen_price"] = min(price, watch["lowest_seen_price"])
+        watch["history"].append({"at": watch["last_checked_at"], "price": price,
+                                 "offer_id": cheapest["id"]})
+        watch["history"] = watch["history"][-100:]
+    watch["url"], watch["canonical_url"], watch["merchant"] = cheapest["url"], cheapest["url"], cheapest["merchant"]
+    typ = watch["target_type"]
+    meets = price < previous and ((typ == "any") or
+        (typ == "absolute" and price <= watch["target_price"]) or
+        (typ == "percentage" and price <= watch["initial_price"] * (1 - watch["target_percentage"] / 100)))
+    meets = meets and (watch.get("last_alerted_price") is None or price < watch["last_alerted_price"])
+    LOG.info("price_check watch=%s previous=%s current=%s offers_available=%d alert=%s",
+             watch["id"], previous, price, len(available), meets)
+    if not meets: return ""
+    watch["last_notified_at"] = now()
+    watch["last_alerted_price"] = price
+    pct = (previous - price) / previous * 100
+    return (f"👀 {watch['name']} caiu.\nMenor preço entre as lojas: "
+            f"{format_price(previous, watch['currency'])} → {format_price(price, watch['currency'])} "
+            f"(queda de {pct:.1f}%).\n{cheapest['merchant']}: {cheapest['url']}")
+
+
+def check_price(watch, fetch=fetch_page, search=search_products):
+    if watch.get("offers") is not None:
+        return check_multi_price(watch, fetch, search)
     previous = watch["last_price"]
     try:
         result = extract_product(fetch(watch["url"]), watch["url"])
@@ -382,7 +569,8 @@ def search_news(query):
         try: published = parsedate_to_datetime(date).isoformat()
         except (TypeError, ValueError): continue
         results.append({"title": title, "url": link, "published_date": published,
-                        "source": source.text if source is not None else "Google Notícias"})
+                        "source": source.text if source is not None else "Google Notícias",
+                        "source_url": source.get("url") if source is not None else None})
     return results
 
 
@@ -394,17 +582,49 @@ def search_web(query):
     return result.get("data", {}).get("web", [])
 
 
-def collect_news(profile, search=search_news, important=False, today=None):
+def resolve_rss_story(story, lookup=None):
+    """One bounded title lookup for a direct publisher URL; RSS link remains fallback."""
+    rss_url = story["url"]
+    if urlsplit(rss_url).hostname != "news.google.com": return None
+    publisher = story.get("source_url")
+    if not publisher: return None
+    try: publisher_host = urlsplit(publisher).hostname.removeprefix("www.")
+    except (ValueError, AttributeError): return None
+    if not publisher_host: return None
+    if lookup is None:
+        from tools.web_tools import web_search_tool
+        def lookup(query):
+            result = json.loads(web_search_tool(query, limit=4))
+            return result.get("data", {}).get("web", []) if result.get("success") else []
+    title = re.sub(r"\s+-\s+[^-]{2,60}$", "", story["title"]).strip()
+    try: results = lookup(f'"{title[:110]}" site:{publisher_host}')
+    except Exception: return None
+    wanted = story_key(title)
+    for result in results[:4]:
+        try: direct = canonical_story(result.get("url") or result.get("href"))
+        except (TypeError, ValueError): continue
+        if not direct: continue
+        host = urlsplit(direct).hostname.removeprefix("www.")
+        if host != publisher_host and not host.endswith("." + publisher_host): continue
+        found = story_key(result.get("title") or "")
+        overlap = len(wanted & found)
+        if overlap >= min(3, len(wanted)) and overlap / max(1, min(len(wanted), len(found))) >= .6:
+            return direct
+    return None
+
+
+def collect_news(profile, search=search_news, important=False, today=None, resolve=resolve_rss_story):
     today = today or datetime.now(timezone.utc)
-    candidates, seen, stories, sources = [], set(profile["delivered"]), [], set()
+    candidates, seen, stories, sources = {}, set(profile["delivered"]), [], set()
     old_events = [story_key(title) for title in profile.get("delivered_titles", [])]
     for interest in profile["interests"][:8]:
+        candidates[interest] = []
         query = f"{interest} universidade -Flamengo -futebol when:2d" if interest.casefold() == "ufmg" else f"{interest} when:2d"
         try: results = search(query)
         except Exception as error:
             LOG.warning("news_search_error interest_hash=%s type=%s", hashlib.sha256(interest.encode()).hexdigest()[:10], type(error).__name__)
             continue
-        for item in results[:6]:
+        for item in results[:8]:
             url = canonical_story(item.get("url") or item.get("href"))
             title = str(item.get("title") or "").strip()
             if not url or len(title) < 15 or url in seen or any(same_event(story_key(title), old) for old in old_events): continue
@@ -418,28 +638,60 @@ def collect_news(profile, search=search_news, important=False, today=None):
             except ValueError: continue
             if important and not re.search(r"anunci|lanç|aprova|elei|morre|crise|acord|record|announce|launch|release|wins|dies", title, re.I):
                 continue
-            candidates.append({"id": url, "title": title[:180], "url": url, "interest": interest,
+            candidates[interest].append({"id": url, "title": title[:180], "url": url, "interest": interest,
                                "source": item.get("source") or urlsplit(url).hostname,
+                               "source_url": item.get("source_url"),
                                "published": dt.date().isoformat(), "tokens": story_key(title)})
             sources.add(str(item.get("source") or urlsplit(url).hostname))
     duplicates = 0
-    for item in candidates:
-        if item["id"] in seen or any(same_event(item["tokens"], other["tokens"]) for other in stories):
-            duplicates += 1
-            continue
-        stories.append(item)
-        if len(stories) == 6: break
+    offsets = {interest: 0 for interest in candidates}
+    def take_one(interest):
+        nonlocal duplicates
+        queue = candidates[interest]
+        while offsets[interest] < len(queue):
+            item = queue[offsets[interest]]
+            offsets[interest] += 1
+            if item["id"] in seen or any(same_event(item["tokens"], other["tokens"]) for other in stories):
+                duplicates += 1
+                continue
+            stories.append(item)
+            return True
+        return False
+    # First reserve one place per interest that has a distinct recent story.
+    for interest in candidates:
+        if len(stories) >= 6: break
+        take_one(interest)
+    # Fill the remainder in relevance order within each interest, one round at
+    # a time, redistributing places when a topic has no usable story.
+    while len(stories) < 6:
+        progressed = False
+        for interest in candidates:
+            if len(stories) >= 6: break
+            progressed = take_one(interest) or progressed
+        if not progressed: break
+    for item in stories:
+        if item.get("source_url") and urlsplit(item["url"]).hostname == "news.google.com":
+            try: direct = resolve(item)
+            except Exception: direct = None
+            if direct:
+                item["id"], item["url"] = direct, direct
     interest_hashes = [hashlib.sha256(value.encode()).hexdigest()[:10] for value in profile["interests"][:8]]
-    LOG.info("news_check interest_hashes=%s sources=%d candidates=%d deduplicated=%d sent=%d", interest_hashes, len(sources), len(candidates), duplicates, len(stories))
-    for item in stories: item.pop("tokens", None)
+    LOG.info("news_check interest_hashes=%s sources=%d candidates=%d deduplicated=%d sent=%d", interest_hashes, len(sources), sum(map(len, candidates.values())), duplicates, len(stories))
+    for item in stories:
+        item.pop("tokens", None)
+        item.pop("source_url", None)
     return stories
 
 
-def render_news(stories):
+def render_news(stories, interests=None):
     if not stories: return ""
     lines = ["☕ Seu Prucê de hoje"]
     for i, story in enumerate(stories, 1):
         lines.append(f"{i}. {story['interest'].upper()} — {story['title']} ({story['source']}, {story['published']})\n{story['url']}")
+    missing = ([interest for interest in (interests or []) if interest not in {story["interest"] for story in stories}]
+               if len(interests or []) <= 6 else [])
+    if missing:
+        lines.append("Sem novidade recente e verificável sobre " + ", ".join(missing) + " nesta edição.")
     lines.append("Quer que eu aprofunde alguma?")
     return "\n\n".join(lines)
 
@@ -514,13 +766,13 @@ def check_generic(watch, search=search_news):
     return "\n".join(lines)
 
 
-def tick(kind, fetch=fetch_page, search=search_news):
+def tick(kind, fetch=fetch_page, search=search_news, product_search=search_products):
     with locked() as state:
         messages = []
         if kind == "price":
             for watch in state["price_watches"]:
                 if watch["status"] == "active":
-                    msg = check_price(watch, fetch)
+                    msg = check_price(watch, fetch, product_search)
                     if msg: messages.append(msg)
         elif kind in ("news", "important"):
             profile = state["news"]
@@ -529,7 +781,7 @@ def tick(kind, fetch=fetch_page, search=search_news):
                 stories = collect_news(profile, search, important=kind == "important")
                 if stories:
                     context = briefing_context(state) if kind == "news" else ""
-                    messages.append(render_news(stories) + ("\n\n" + context if context else ""))
+                    messages.append(render_news(stories, profile["interests"]) + ("\n\n" + context if context else ""))
                     profile["delivered"] = (profile["delivered"] + [s["id"] for s in stories])[-500:]
                     profile["delivered_titles"] = (profile.get("delivered_titles", []) + [s["title"] for s in stories])[-500:]
                     profile["last_stories"] = stories
@@ -543,7 +795,7 @@ def tick(kind, fetch=fetch_page, search=search_news):
     return "\n\n".join(messages)
 
 
-def manage(data, fetch=fetch_page, search=search_news, runtime=None):
+def manage(data, fetch=fetch_page, search=search_news, runtime=None, product_search=search_products):
     action = data.get("action")
     with locked() as state:
         watches, profile = state["price_watches"], state["news"]
@@ -598,8 +850,71 @@ def manage(data, fetch=fetch_page, search=search_news, runtime=None):
             save_state(state)
             LOG.info("price_watch_created watch=%s", ident)
             return {"status": "pending", "id": ident, "text": f"Encontrei {watch['name']} por {format_price(watch['last_price'], watch['currency'])}. Quer aviso em qualquer queda, abaixo de um preço, ou após uma queda percentual?"}
+        if action == "discover_price":
+            query = data.get("query")
+            if not isinstance(query, str) or not 2 <= len(query.strip()) <= 120 or not product_tokens(query):
+                raise WatchError("Qual é o nome exato do produto que você quer acompanhar?")
+            ident = hashlib.sha256(("multi:" + " ".join(product_tokens(query))).encode()).hexdigest()[:12]
+            existing = next((w for w in watches if w["id"] == ident and w["status"] != "cancelled"), None)
+            if existing: return {"status": "exists", "watch": existing}
+            offers = discover_offers(query, fetch, product_search)
+            if not offers:
+                return {"status": "unavailable", "text": "Não encontrei ofertas com preço que eu consiga confirmar para esse produto. Nenhum acompanhamento foi criado."}
+            cheapest = offers[0]
+            watch = {"id": ident, "query": query.strip(), "offers": offers,
+                     "selection_mode": None, "selected_offer_ids": [], "last_discovery_at": now(),
+                     "url": cheapest["url"], "canonical_url": cheapest["url"],
+                     "name": query.strip(), "merchant": cheapest["merchant"],
+                     "currency": cheapest["currency"], "initial_price": cheapest["last_price"],
+                     "last_price": cheapest["last_price"], "lowest_seen_price": cheapest["last_price"],
+                     "target_type": None, "target_price": None, "target_percentage": None,
+                     "created_at": now(), "last_checked_at": now(), "last_notified_at": None,
+                     "last_alerted_price": None, "status": "pending",
+                     "history": [{"at": now(), "price": cheapest["last_price"], "offer_id": cheapest["id"]}]}
+            watches.append(watch)
+            save_state(state)
+            LOG.info("price_watch_created watch=%s offers=%d", ident, len(offers))
+            lines = [f"Encontrei estes preços confirmados para {watch['name']}:"]
+            lines.extend(f"{index}. {offer['merchant']} — {format_price(offer['last_price'], offer['currency'])}"
+                         for index, offer in enumerate(offers, 1))
+            lines.append("Quer acompanhar o menor preço entre elas, lojas específicas ou todas as ofertas? Depois me diga quando avisar.")
+            return {"status": "pending", "id": ident, "offers": offers, "text": "\n".join(lines)}
+        if action == "select_price":
+            watch = find_watch(state, data.get("product"))
+            if "offers" not in watch: raise WatchError("Esse acompanhamento usa um link único; não há lojas para selecionar.")
+            mode = data.get("selection_mode")
+            if mode not in ("lowest", "stores", "all"):
+                raise WatchError("Quer acompanhar o menor preço, lojas específicas ou todas as ofertas?")
+            selected = []
+            if mode == "stores":
+                stores = data.get("stores")
+                if not isinstance(stores, list) or not stores or not all(isinstance(x, str) for x in stores):
+                    raise WatchError("Quais lojas encontradas você quer acompanhar?")
+                selected = [offer["id"] for offer in watch["offers"] if any(
+                    store.casefold() in offer["merchant"].casefold() or store == offer["id"] for store in stores)]
+                if not selected: raise WatchError("Não encontrei essas lojas entre as ofertas confirmadas.")
+            changed = (watch.get("selection_mode"), set(watch.get("selected_offer_ids", []))) != (mode, set(selected))
+            watch["selection_mode"] = mode
+            watch["selected_offer_ids"] = selected
+            scoped = [offer for offer in selected_offers(watch) if offer["status"] == "available"]
+            if not scoped: raise WatchError("Essas lojas estão indisponíveis agora. Escolha outra oferta.")
+            cheapest = min(scoped, key=lambda offer: offer["last_price"])
+            if watch["status"] == "pending" or changed:
+                watch["initial_price"] = cheapest["last_price"]
+                watch["last_alerted_price"] = None
+                watch["history"].append({"at": now(), "price": cheapest["last_price"],
+                                         "offer_id": cheapest["id"], "event": "selection_changed"})
+                watch["history"] = watch["history"][-100:]
+            watch["last_price"] = cheapest["last_price"]
+            watch["url"], watch["canonical_url"], watch["merchant"] = cheapest["url"], cheapest["url"], cheapest["merchant"]
+            save_state(state)
+            return {"status": watch["status"], "watch": watch,
+                    "text": (f"Vou usar {len(scoped)} oferta(s), começando em {format_price(cheapest['last_price'], watch['currency'])}. "
+                             + ("Quer aviso em qualquer queda, abaixo de um preço ou após uma queda percentual?" if watch["status"] == "pending" else "Atualizei as lojas acompanhadas."))}
         if action == "set_price":
             watch = find_watch(state, data.get("product"))
+            if "offers" in watch and not watch.get("selection_mode"):
+                raise WatchError("Quer acompanhar o menor preço, lojas específicas ou todas as ofertas?")
             typ = data.get("target_type")
             if typ not in ("any", "absolute", "percentage"): raise WatchError("Qual condição de aviso você prefere?")
             target = money(data.get("target_price")) if typ == "absolute" else None
@@ -617,10 +932,11 @@ def manage(data, fetch=fetch_page, search=search_news, runtime=None):
                     "news": {"enabled": profile["enabled"], "interests": profile["interests"], "schedule": profile["schedule"]}}
         if action == "price_status":
             watch = find_watch(state, data.get("product"))
-            return {"status": "ok", "watch": watch, "text": f"Começamos em {format_price(watch['initial_price'], watch['currency'])}. Agora está em {format_price(watch['last_price'], watch['currency'])}. Menor preço que vi desde então: {format_price(watch['lowest_seen_price'], watch['currency'])}."}
+            suffix = f" Loja mais barata agora: {watch['merchant']}." if "offers" in watch else ""
+            return {"status": "ok", "watch": watch, "text": f"Começamos em {format_price(watch['initial_price'], watch['currency'])}. Agora está em {format_price(watch['last_price'], watch['currency'])}. Menor preço que vi desde então: {format_price(watch['lowest_seen_price'], watch['currency'])}.{suffix}"}
         if action == "check_price":
             watch = find_watch(state, data.get("product"))
-            check_price(watch, fetch)
+            check_price(watch, fetch, product_search)
             save_state(state)
             return {"status": "ok", "watch": watch}
         if action == "cancel_price":
@@ -681,7 +997,7 @@ def manage(data, fetch=fetch_page, search=search_news, runtime=None):
                     profile["last_stories"] = stories
                     profile["last_digest_at"] = now()
                 save_state(state)
-                return {"status": "ok", "text": render_news(stories) or "Não encontrei notícias novas e verificáveis para seu jornal agora."}
+                return {"status": "ok", "text": render_news(stories, profile["interests"]) or "Não encontrei notícias novas e verificáveis para seu jornal agora."}
             save_state(state)
             return {"status": "ok", "news": profile}
         if action == "story":

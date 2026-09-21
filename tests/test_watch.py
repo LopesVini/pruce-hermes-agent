@@ -33,6 +33,12 @@ def page(price):
     return HTML.replace('1.899,90', price)
 
 
+def product_html(name, price, currency='BRL'):
+    return ('<script type="application/ld+json">' + json.dumps({
+        '@type': 'Product', 'name': name,
+        'offers': {'@type': 'Offer', 'price': price, 'priceCurrency': currency}}) + '</script>')
+
+
 class WatchTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -84,6 +90,9 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(watch.extract_product('<meta property="product:price:amount" content="149.90"><meta property="product:price:currency" content="BRL">', URL)['price'], 149.90)
         self.assertEqual(watch.extract_product('<span itemprop="price" content="199.00">R$ 199</span>', URL)['price'], 199)
         self.assertEqual(watch.extract_product('<h1>Book</h1><p class="price_color">£51.77</p>', URL)['price'], 51.77)
+        self.assertEqual(watch.extract_product('<h1>AirPods Pro 3</h1><script>{"productVariant":{"price":{"amount":2099.9,"currencyCode":"BRL"}}}</script>', URL)['price'], 2099.9)
+        self.assertEqual(watch.extract_product('<h1>AirPods Pro 3</h1><script>ShopifyAnalytics.lib.track("Viewed Product",{"currency":"BRL","name":"AirPods Pro 3","price":"2099.90","available":true},undefined)</script>', URL)['price'], 2099.9)
+        self.assertEqual(watch.extract_product('<h1>AirPods Pro 3</h1><h2 class="price">R$ 1.599,00 <span>no pix</span></h2>', URL)['price'], 1599)
         with self.assertRaises(watch.WatchError): watch.extract_product('<div>Preço sob consulta</div>', URL)
         with self.assertRaises(watch.WatchError): watch.extract_product('<span itemprop="price" content="0">', URL)
 
@@ -133,6 +142,86 @@ class WatchTests(unittest.TestCase):
             with patch.object(watch, 'STATE', Path(other) / 'pruce/watches.json'):
                 self.assertEqual(watch.read_state()['price_watches'], [])
 
+    def test_multistore_discovery_filters_wrong_product_and_duplicates(self):
+        self.assertTrue(watch.product_matches('AirPods Pro 3', 'AirPods Pro 3ª Geração - Novo e Lacrado'))
+        links = {
+            'https://a.example/airpods-pro-3': ('AirPods Pro 3', '1.899,00'),
+            'https://b.example/airpods-pro-3': ('Apple AirPods Pro 3', '1.949,00'),
+            'https://c.example/airpods-pro-3': ('AirPods Pro 3', '2.099,00'),
+            'https://wrong.example/airpods-pro-2': ('AirPods Pro 2', '999,00'),
+            'https://accessory.example/case': ('Capa para AirPods Pro 3', '49,00'),
+        }
+        search = lambda _: [{'url': u, 'title': name} for u, (name, _) in links.items()]
+        fetch = lambda u: product_html(*links[u])
+        result = watch.manage({'action': 'discover_price', 'query': 'AirPods Pro 3'},
+                              fetch=fetch, product_search=search)
+        self.assertEqual(result['status'], 'pending')
+        self.assertEqual([x['merchant'] for x in result['offers']], ['a.example', 'b.example', 'c.example'])
+        self.assertIn('R$ 1.899,00', result['text'])
+        self.assertEqual(len(watch.read_state()['price_watches'][0]['offers']), 3)
+
+    def test_multistore_lowest_five_percent_store_switch_and_unavailable(self):
+        links = {'https://a.example/p': ('AirPods Pro 3', '1.900,00'),
+                 'https://b.example/p': ('AirPods Pro 3', '1.949,00')}
+        search = lambda _: [{'url': u, 'title': name} for u, (name, _) in links.items()]
+        fetch = lambda u: product_html(*links[u])
+        watch.manage({'action': 'discover_price', 'query': 'AirPods Pro 3'}, fetch=fetch, product_search=search)
+        with patch.object(watch, 'sync_job'):
+            watch.manage({'action': 'select_price', 'selection_mode': 'lowest'})
+            watch.manage({'action': 'set_price', 'target_type': 'percentage', 'target_percentage': 5})
+        w = watch.read_state()['price_watches'][0]
+        self.assertEqual(w['initial_price'], 1900)
+        links['https://b.example/p'] = ('AirPods Pro 3', '1.800,00')
+        alert = watch.check_price(w, fetch, search)
+        self.assertIn('b.example', alert)
+        self.assertIn('R$ 1.800,00', alert)
+        self.assertEqual(w['last_price'], 1800)
+        self.assertEqual(watch.check_price(w, fetch, search), '')
+        def one_dead(u):
+            if 'a.example' in u: raise OSError('HTTP 404')
+            return fetch(u)
+        self.assertEqual(watch.check_price(w, one_dead, search), '')
+        self.assertEqual([x['status'] for x in w['offers']], ['unavailable', 'available'])
+        self.assertEqual(w['status'], 'active')
+        self.assertEqual(w['last_price'], 1800)
+
+    def test_multistore_specific_stores_and_no_reliable_offer(self):
+        links = {'https://a.example/p': ('MacBook Air M4', '5.900,00'),
+                 'https://b.example/p': ('MacBook Air M4', '6.100,00')}
+        search = lambda _: [{'url': u, 'title': name} for u, (name, _) in links.items()]
+        fetch = lambda u: product_html(*links[u])
+        watch.manage({'action': 'discover_price', 'query': 'MacBook Air M4'}, fetch=fetch, product_search=search)
+        selected = watch.manage({'action': 'select_price', 'selection_mode': 'stores', 'stores': ['b.example']})
+        self.assertEqual(selected['watch']['last_price'], 6100)
+        self.assertEqual(len(selected['watch']['selected_offer_ids']), 1)
+        no_offer = watch.manage({'action': 'discover_price', 'query': 'AirPods Pro 3'},
+                                fetch=lambda _: product_html('AirPods Pro 2', '999,00'),
+                                product_search=lambda _: [{'url': 'https://wrong.example/p', 'title': 'AirPods Pro 3'}])
+        self.assertEqual(no_offer['status'], 'unavailable')
+        self.assertEqual(len(watch.read_state()['price_watches']), 1)
+
+    def test_multistore_discovers_new_store_once_per_72_hours(self):
+        first = 'https://a.example/p'
+        second = 'https://b.example/p'
+        pages = {first: product_html('AirPods Pro 3', '1.900,00'),
+                 second: product_html('AirPods Pro 3', '1.700,00')}
+        watch.manage({'action': 'discover_price', 'query': 'AirPods Pro 3'},
+                     fetch=lambda u: pages[u],
+                     product_search=lambda _: [{'url': first, 'title': 'AirPods Pro 3'}])
+        with patch.object(watch, 'sync_job'):
+            watch.manage({'action': 'select_price', 'selection_mode': 'lowest'})
+            watch.manage({'action': 'set_price', 'target_type': 'any'})
+        w = watch.read_state()['price_watches'][0]
+        w['last_discovery_at'] = '2020-01-01T00:00:00+00:00'
+        searches = []
+        def search(query):
+            searches.append(query)
+            return [{'url': second, 'title': 'AirPods Pro 3'}]
+        self.assertIn('b.example', watch.check_price(w, lambda u: pages[u], search))
+        self.assertEqual(len(w['offers']), 2)
+        self.assertEqual(watch.check_price(w, lambda u: pages[u], search), '')
+        self.assertEqual(len(searches), 1)
+
     def test_news_optin_schedule_edit_pause_resume_cancel(self):
         with patch.object(watch, 'sync_job'), patch.object(watch, 'schedule', return_value='0 11 * * 1,3,5'):
             base = {'action': 'enable_news', 'interests': ['Apple', 'UFMG'], 'timezone': 'America/Sao_Paulo',
@@ -163,6 +252,60 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(watch.collect_news(profile, lambda _: [a, b], today=datetime.fromisoformat(date)), [])
         self.assertEqual(watch.collect_news(profile, lambda _: [], today=datetime.fromisoformat(date)), [])
         self.assertEqual(watch.render_news([]), '')
+
+    def test_news_balances_three_interests_and_caps_six(self):
+        profile = watch.default_state()['news']
+        profile['interests'] = ['Apple', 'inteligência artificial', 'UFMG']
+        date = '2026-09-21T10:00:00+00:00'
+        subjects = ['novos aparelhos para estudantes', 'relatório financeiro trimestral',
+                    'parceria acadêmica internacional', 'festival cultural de setembro',
+                    'atualização inédita de software', 'pesquisa sobre baterias sustentáveis',
+                    'expansão de laboratório regional', 'programa de bolsas científicas']
+        def search(query):
+            topic = 'Apple' if 'Apple' in query else 'IA' if 'inteligência' in query else 'UFMG'
+            count = 8 if topic == 'Apple' else 3
+            detail = {'Apple': 'iphone ios', 'IA': 'algoritmos modelos', 'UFMG': 'campus universidade'}[topic]
+            return [{'title': f'{topic} {detail} divulga {subjects[i]}',
+                     'url': f'https://{topic.lower()}.example/{i}', 'date': date} for i in range(count)]
+        stories = watch.collect_news(profile, search, today=datetime.fromisoformat(date))
+        self.assertEqual(len(stories), 6)
+        self.assertEqual([sum(s['interest'] == topic for s in stories) for topic in profile['interests']], [2, 2, 2])
+        self.assertEqual([s['interest'] for s in stories[:3]], profile['interests'])
+
+    def test_news_topic_without_content_redistributes_and_explains(self):
+        profile = watch.default_state()['news']
+        profile['interests'] = ['Apple', 'IA', 'UFMG']
+        date = '2026-09-21T10:00:00+00:00'
+        subjects = ['novos aparelhos para estudantes', 'relatório financeiro trimestral',
+                    'parceria acadêmica internacional', 'festival cultural de setembro',
+                    'atualização inédita de software']
+        def search(query):
+            if 'UFMG' in query: return []
+            topic = 'Apple' if 'Apple' in query else 'IA'
+            detail = {'Apple': 'iphone ios', 'IA': 'algoritmos modelos'}[topic]
+            return [{'title': f'{topic} {detail} divulga {subjects[i]}',
+                     'url': f'https://{topic.lower()}.example/{i}', 'date': date} for i in range(5)]
+        stories = watch.collect_news(profile, search, today=datetime.fromisoformat(date))
+        self.assertEqual(len(stories), 6)
+        self.assertEqual({s['interest'] for s in stories}, {'Apple', 'IA'})
+        self.assertIn('Sem novidade recente e verificável sobre UFMG', watch.render_news(stories, profile['interests']))
+
+    def test_rss_direct_canonical_url_and_google_fallback(self):
+        rss = 'https://news.google.com/rss/articles/example'
+        item = {'title': 'Apple anuncia novo iPhone em evento oficial - Canaltech',
+                'url': rss, 'source': 'Canaltech', 'source_url': 'https://canaltech.com.br',
+                'date': '2026-09-21T10:00:00+00:00'}
+        direct = 'https://canaltech.com.br/smartphone/apple-anuncia-novo-iphone-em-evento-oficial/'
+        lookup = lambda _: [{'url': direct, 'title': 'Apple anuncia novo iPhone em evento oficial'}]
+        self.assertEqual(watch.resolve_rss_story(item, lookup), direct)
+        self.assertIsNone(watch.resolve_rss_story(item, lambda _: []))
+        profile = watch.default_state()['news']
+        profile['interests'] = ['Apple']
+        fixed = datetime.fromisoformat('2026-09-21T12:00:00+00:00')
+        resolved = watch.collect_news(profile, lambda _: [item], today=fixed, resolve=lambda _: direct)
+        self.assertEqual(resolved[0]['url'], direct)
+        fallback = watch.collect_news(profile, lambda _: [item], today=fixed, resolve=lambda _: None)
+        self.assertEqual(fallback[0]['url'], rss)
 
     def test_news_search_failure_silent_and_important_filter(self):
         p = watch.default_state()['news']

@@ -125,9 +125,10 @@ correct it and follow the canonical result.
 
 Choose the narrowest path that can answer the owner's actual question:
 
-- **Acompanhamentos:** for a product link to monitor, price alerts, price
-  history, an opt-in personalized journal, opportunities, jobs, tickets,
-  flights, events, contests, real estate, cars, launches or “o que você está
+- **Acompanhamentos:** for a product or product link to monitor, price alerts,
+  price history, an opt-in personalized journal, news interests,
+  opportunities, jobs, tickets, flights, events, contests, real estate, cars,
+  launches or “o que você está
   acompanhando?”, use `pruce-watch`. Its script performs the live read, saves
   state and manages native cron. A price watch becomes active only after the
   owner chooses a condition. Other watches and news start only after explicit
