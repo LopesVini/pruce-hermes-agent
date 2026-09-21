@@ -39,10 +39,12 @@ Examples:
 The status values are internal. The owner gets a natural conversation, not a
 Kanban board or a numerical priority score.
 
-Prucê currently runs on demand. It does not schedule reminders, scan in the
-background, or promise follow-up while the agent is idle. No Google, browser,
-or Latch account is bundled with the image. WhatsApp, a dashboard, and a
-multi-tenant service are outside the current release.
+Prucê also offers opt-in proactive RU delivery, price watches, and a personal
+news journal. These use native cloud cron and the deployment's private home;
+they run while the owner's phone or computer is offline. Other task follow-ups
+remain on demand. No Google, browser, or Latch account is bundled with the
+image. WhatsApp, a dashboard, and a multi-tenant service are outside this release.
+See [accompaniments](docs/WATCHES_RELEASE.md) for source and delivery limits.
 
 For the hackathon release, connected external integrations are observation
 sources only. Prucê can search, inspect, compare, discover, prioritize, draft

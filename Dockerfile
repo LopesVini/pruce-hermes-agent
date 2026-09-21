@@ -29,6 +29,8 @@ RUN /opt/hermes/.venv/bin/python3 -B /opt/plow/patch-ru-delivery.py
 COPY --chmod=0644 runtime/persona.md /opt/hermes/plow-seed/persona.md
 # Follow the official variant: Hermes reconciles bundled skills into its home.
 COPY skills/ /opt/hermes/skills/
+RUN chmod 0755 /opt/hermes/skills/pruce-watch /opt/hermes/skills/pruce-watch/scripts \
+ && chmod 0644 /opt/hermes/skills/pruce-watch/SKILL.md /opt/hermes/skills/pruce-watch/scripts/watch.py
 RUN chmod 0755 /opt/hermes/skills/pruce-ru /opt/hermes/skills/pruce-ru/scripts \
  && chmod 0644 /opt/hermes/skills/pruce-ru/SKILL.md /opt/hermes/skills/pruce-ru/scripts/menu.py /opt/hermes/skills/pruce-ru/scripts/subscription.py /opt/hermes/skills/pruce-ru/scripts/daily.py /opt/hermes/skills/pruce-ru/scripts/request.py
 RUN chmod 0755 /opt/hermes/skills/pruce-drafting /opt/hermes/skills/pruce-onboarding /opt/hermes/skills/pruce-operations /opt/hermes/skills/pruce-sources /opt/hermes/skills/pruce-sources/scripts /opt/hermes/skills/pruce-triage /opt/hermes/skills/pruce-tasks /opt/hermes/skills/pruce-tasks/scripts \

@@ -22,6 +22,16 @@ def job(once=False):
                                   'opt_in': True, 'key': key})}
 
 
+def watch_job(kind):
+    name, script, marker = {
+        'price': ('pruce-price-watch', 'pruce-price-watch.py', 'pruce_price_v1'),
+        'news': ('pruce-news-digest', 'pruce-news-digest.py', 'pruce_news_v1'),
+        'important': ('pruce-news-important', 'pruce-news-important.py', 'pruce_news_important_v1'),
+    }[kind]
+    return {'id': 'synthetic-id', 'no_agent': True, 'name': name,
+            'script': script, 'prompt': json.dumps({'kind': marker, 'opt_in': True})}
+
+
 class PatchGuardTests(unittest.TestCase):
     def test_changed_base_source_cannot_be_patched_silently(self):
         with self.assertRaises(RuntimeError):
@@ -67,6 +77,12 @@ class NativeDeliveryPresentationTests(unittest.TestCase):
     def test_once_and_daily_standalone_fallback_get_exact_menu_only(self):
         for once in (False, True):
             self.assertEqual(self.deliver(job(once), live=False), MENU)
+
+    def test_watch_jobs_get_clean_body_only_with_exact_marker(self):
+        for kind in ('price', 'news', 'important'):
+            record = watch_job(kind)
+            self.assertEqual(self.deliver(record), MENU)
+            self.assertIn('Cronjob Response:', self.deliver({**record, 'name': 'other'}))
 
     def test_other_jobs_and_lookalikes_keep_native_presentation(self):
         for record in ({**job(), 'name': 'other'}, {**job(), 'script': 'other.py'},

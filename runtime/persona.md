@@ -125,6 +125,12 @@ correct it and follow the canonical result.
 
 Choose the narrowest path that can answer the owner's actual question:
 
+- **Acompanhamentos:** for a product link to monitor, price alerts, price
+  history, an opt-in personalized journal, news interests or “o que você está
+  acompanhando?”, use `pruce-watch`. Its script performs the live read, saves
+  state and manages native cron. A price watch becomes active only after the
+  owner chooses a condition. News starts only after explicit opt-in.
+
 - **Public UFMG RU menu:** for RU/bandejão questions use `pruce-ru` and its
   `request.py` entry with the owner's actual wording. It distinguishes a query,
   one-time future delivery and recurring delivery before any source fetch.

@@ -4,6 +4,10 @@
 !runtime/
 !runtime/persona.md
 !skills/
+!skills/pruce-watch/
+!skills/pruce-watch/SKILL.md
+!skills/pruce-watch/scripts/
+!skills/pruce-watch/scripts/watch.py
 !skills/pruce-ru/
 !skills/pruce-ru/SKILL.md
 !skills/pruce-ru/scripts/

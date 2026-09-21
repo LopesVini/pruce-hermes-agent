@@ -1,0 +1,587 @@
+"""Persistent price and news watches using the native Hermes cron provider."""
+import fcntl
+import hashlib
+from html import unescape
+from html.parser import HTMLParser
+import ipaddress
+import json
+import logging
+import os
+from pathlib import Path
+import re
+import sys
+import tempfile
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from xml.etree import ElementTree
+from zoneinfo import ZoneInfo
+
+LOG = logging.getLogger("pruce.watch")
+HOME = Path(os.environ.get("HERMES_HOME", "/var/lib/hermes"))
+STATE = HOME / "pruce/watches.json"
+JOBS = {"price": ("pruce-price-watch", "pruce-price-watch.py", "pruce_price_v1"),
+        "news": ("pruce-news-digest", "pruce-news-digest.py", "pruce_news_v1"),
+        "important": ("pruce-news-important", "pruce-news-important.py", "pruce_news_important_v1")}
+
+
+class WatchError(ValueError):
+    pass
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def clean_url(raw):
+    from tools.url_safety import is_safe_url, sensitive_query_param_name
+    if not isinstance(raw, str) or len(raw) > 2048:
+        raise WatchError("Envie um link público do produto.")
+    p = urlsplit(raw.strip())
+    if p.scheme != "https" or not p.hostname or p.username or p.password or p.port not in (None, 443):
+        raise WatchError("Preciso de um link HTTPS público da loja.")
+    if sensitive_query_param_name(raw) or not is_safe_url(raw):
+        raise WatchError("Esse link não é seguro para consulta automática.")
+    query = [(k, v) for k, v in parse_qsl(p.query) if not re.match(r"^(utm_|fbclid$|gclid$)", k, re.I)]
+    return urlunsplit(("https", p.netloc.lower(), p.path or "/", urlencode(query), ""))
+
+
+def fetch_page(url):
+    from tools.url_safety import create_ssrf_safe_client
+    with create_ssrf_safe_client(timeout=8.0, follow_redirects=False) as client:
+        response = client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; PrucePriceWatch/1.0)",
+                                            "Accept": "text/html,application/xhtml+xml"})
+        if response.status_code != 200:
+            raise WatchError("Não consegui acompanhar automaticamente o preço nessa loja ainda.")
+        if "html" not in response.headers.get("content-type", "").lower():
+            raise WatchError("A loja não forneceu uma página de produto legível.")
+        if len(response.content) > 2_000_000:
+            raise WatchError("A página da loja é grande demais para leitura segura.")
+        return response.text
+
+
+def money(value):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        number = float(value)
+    elif isinstance(value, str):
+        s = re.sub(r"[^\d,.-]", "", value.strip())
+        if not s:
+            return None
+        if "," in s and "." in s:
+            s = s.replace(".", "").replace(",", ".") if s.rfind(",") > s.rfind(".") else s.replace(",", "")
+        elif "," in s:
+            s = s.replace(".", "").replace(",", ".") if len(s.rsplit(",", 1)[-1]) <= 2 else s.replace(",", "")
+        elif s.count(".") == 1 and len(s.rsplit(".", 1)[-1]) == 3:
+            s = s.replace(".", "")
+        try:
+            number = float(s)
+        except ValueError:
+            return None
+    else:
+        return None
+    return round(number, 2) if 0 < number < 100_000_000 else None
+
+
+class ProductHTML(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.meta, self.ld, self.title, self.heading, self._script, self._title, self._heading = {}, [], "", "", False, False, False
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "meta":
+            key = (attrs.get("property") or attrs.get("name") or "").lower()
+            self.meta[key] = attrs.get("content", "")
+        if tag == "script" and attrs.get("type", "").lower() == "application/ld+json":
+            self._script = True
+            self.ld.append("")
+        if tag == "title":
+            self._title = True
+        if tag == "h1":
+            self._heading = True
+
+    def handle_endtag(self, tag):
+        if tag == "script": self._script = False
+        if tag == "title": self._title = False
+        if tag == "h1": self._heading = False
+
+    def handle_data(self, data):
+        if self._script and self.ld: self.ld[-1] += data
+        if self._title: self.title += data
+        if self._heading: self.heading += data
+
+
+def extract_product(html, url):
+    page = ProductHTML()
+    page.feed(html[:2_000_000])
+    candidates = []
+    def visit(obj):
+        if isinstance(obj, list):
+            for x in obj: visit(x)
+        elif isinstance(obj, dict):
+            kind = obj.get("@type", "")
+            if isinstance(kind, list): kind = " ".join(kind)
+            if "Product" in str(kind):
+                offers = obj.get("offers", {})
+                if isinstance(offers, list): offers = next((x for x in offers if isinstance(x, dict) and money(x.get("price"))), {})
+                if isinstance(offers, dict):
+                    specification = offers.get("priceSpecification", {})
+                    if isinstance(specification, list):
+                        specification = next((x for x in specification if isinstance(x, dict) and money(x.get("price"))), {})
+                    if not isinstance(specification, dict): specification = {}
+                    price = money(offers.get("price") or offers.get("lowPrice") or specification.get("price"))
+                    if price: candidates.append((price, offers.get("priceCurrency") or specification.get("priceCurrency"), obj.get("name")))
+            for key in ("@graph", "mainEntity", "itemListElement"):
+                if key in obj: visit(obj[key])
+    for raw in page.ld:
+        try: visit(json.loads(raw))
+        except (ValueError, TypeError): pass
+    meta = page.meta
+    if not candidates:
+        for key in ("product:price:amount", "og:price:amount", "price", "twitter:data1"):
+            value = money(meta.get(key))
+            if value:
+                candidates.append((value, meta.get("product:price:currency") or meta.get("og:price:currency"), None))
+                break
+    if not candidates:
+        # Conservative visible HTML fallback: only explicitly labelled price attributes.
+        match = re.search(r'(?:itemprop=["\']price["\'][^>]{0,200}content=["\']|data-price=["\'])([\d.,]+)', html, re.I)
+        if match and money(match.group(1)):
+            candidates.append((money(match.group(1)), meta.get("product:price:currency"), None))
+    if not candidates:
+        match = re.search(r'<[^>]{0,200}class=["\'][^"\']*\bprice_color\b[^"\']*["\'][^>]*>\s*([£€$]|R\$)\s*([\d.,]+)', html, re.I)
+        if match and money(match.group(2)):
+            candidates.append((money(match.group(2)), {"£": "GBP", "€": "EUR", "$": "USD", "R$": "BRL"}[match.group(1)], None))
+    if not candidates:
+        raise WatchError("Não consegui acompanhar automaticamente o preço nessa loja ainda.")
+    price, currency, name = candidates[0]
+    currency = (currency or ("BRL" if "R$" in html else "")).upper()
+    if currency not in {"BRL", "USD", "EUR", "GBP"}:
+        raise WatchError("Encontrei um valor, mas não consegui confirmar a moeda.")
+    return {"name": unescape(str(name or meta.get("og:title") or page.heading or page.title)).strip()[:180],
+            "merchant": urlsplit(url).hostname, "currency": currency, "price": price}
+
+
+def default_state():
+    return {"version": 1, "price_watches": [], "news": {"enabled": False, "interests": [],
+            "schedule": None, "timezone": None, "last_digest_at": None, "delivered": [],
+            "delivered_titles": [], "last_stories": []}}
+
+
+def read_state():
+    if not STATE.exists(): return default_state()
+    value = json.loads(STATE.read_text())
+    if not isinstance(value, dict) or value.get("version") != 1 or not isinstance(value.get("price_watches"), list) or not isinstance(value.get("news"), dict):
+        raise WatchError("O estado dos acompanhamentos precisa de revisão.")
+    return value
+
+
+def save_state(value):
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=STATE.parent, delete=False) as output:
+        json.dump(value, output, ensure_ascii=False, separators=(",", ":"))
+        path = Path(output.name)
+    path.chmod(0o600)
+    os.replace(path, STATE)
+
+
+class locked:
+    def __enter__(self):
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        self.file = (STATE.parent / "watches.lock").open("a")
+        fcntl.flock(self.file, fcntl.LOCK_EX)
+        return read_state()
+
+    def __exit__(self, *_):
+        fcntl.flock(self.file, fcntl.LOCK_UN)
+        self.file.close()
+
+
+def format_price(value, currency):
+    symbol = {"BRL": "R$", "USD": "US$", "EUR": "€", "GBP": "£"}[currency]
+    return f"{symbol} {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def find_watch(state, selector):
+    active = [w for w in state["price_watches"] if w["status"] != "cancelled"]
+    if not selector and len(active) == 1: return active[0]
+    matches = [w for w in active if selector and (selector.lower() in w["name"].lower() or selector == w["id"])]
+    if len(matches) != 1: raise WatchError("Qual produto? Envie o nome ou peça a lista dos acompanhamentos.")
+    return matches[0]
+
+
+def origin_destination():
+    from tools.cronjob_job_args import _origin_from_env
+    from gateway.session_context import get_session_env
+    if get_session_env("HERMES_SESSION_CHAT_TYPE", "") not in ("", "dm", "private", "direct"):
+        raise WatchError("Configure acompanhamentos na conversa privada.")
+    origin = _origin_from_env()
+    if not origin or not re.fullmatch(r"[a-z][a-z0-9_-]*", origin.get("platform", "")) or not re.fullmatch(r"[^\s,:]+", str(origin.get("chat_id", ""))):
+        raise WatchError("Não consegui identificar esta conversa para avisos proativos.")
+    dest = f"{origin['platform']}:{origin['chat_id']}"
+    if origin.get("thread_id"): dest += f":{origin['thread_id']}"
+    return origin, dest
+
+
+def native_runtime():
+    sys.path.insert(0, "/opt/hermes")
+    from cron import jobs, scheduler
+    import hermes_time
+    return jobs, scheduler, hermes_time
+
+
+def config(job, kind):
+    name, script, marker = JOBS[kind]
+    try:
+        data = json.loads(job.get("prompt", ""))
+        return data if (job.get("name"), job.get("script"), data.get("kind")) == (name, script, marker) else None
+    except (TypeError, ValueError, AttributeError): return None
+
+
+def install_runner(kind):
+    directory = HOME / "scripts"
+    directory.mkdir(parents=True, exist_ok=True)
+    code = ("import os,runpy\nfrom pathlib import Path\n"
+            f"runpy.run_path(str(Path(os.environ.get('HERMES_HOME','/var/lib/hermes'))/'skills/pruce-watch/scripts/watch.py'),run_name='__main__')\n")
+    # Runner action is fixed in the managed job's prompt, read by this script.
+    code = "import sys\nsys.argv=['watch.py','tick','" + kind + "']\n" + code
+    path = directory / JOBS[kind][1]
+    with tempfile.NamedTemporaryFile("w", dir=directory, delete=False) as out:
+        out.write(code)
+        temp = Path(out.name)
+    temp.chmod(0o644)
+    os.replace(temp, path)
+
+
+def sync_job(kind, enabled, schedule, destination=None, runtime=None):
+    jobs, scheduler, clock = runtime or native_runtime()
+    managed = [j for j in jobs.list_jobs(include_disabled=True) if config(j, kind)]
+    if not enabled:
+        for job in managed: jobs.remove_job(job["id"])
+        scheduler._notify_provider_jobs_changed()
+        return
+    origin, current_dest = origin_destination()
+    deliver = managed[0].get("deliver") if managed else (destination or current_dest)
+    if not isinstance(deliver, str) or deliver.split(":")[0] in ("local", "all", "origin"):
+        raise WatchError("Não consegui confirmar o destino dos avisos.")
+    install_runner(kind)
+    name, script, marker = JOBS[kind]
+    payload = {"name": name, "script": script, "prompt": json.dumps({"kind": marker, "opt_in": True}),
+               "no_agent": True, "deliver": deliver, "failure_deliver": "local"}
+    if managed:
+        result = jobs.update_job(managed[0]["id"], {**payload, "schedule": jobs.parse_schedule(schedule)})
+        if not result: raise WatchError("Não consegui atualizar o agendamento.")
+        if not result.get("enabled", True): result = jobs.resume_job(result["id"])
+        from cron.scheduler_provider import resolve_cron_scheduler
+        resolve_cron_scheduler().register_job(result)
+    else:
+        scheduler.create_job_with_scheduler_registration(**payload, schedule=schedule, origin=origin)
+    for duplicate in managed[1:]: jobs.remove_job(duplicate["id"])
+    scheduler._notify_provider_jobs_changed()
+
+
+def schedule(at, days, user_zone, runtime=None):
+    _, _, clock = runtime or native_runtime()
+    scheduler_zone = clock.now().tzinfo
+    zone = ZoneInfo(user_zone)
+    hour, minute = map(int, at.split(":"))
+    signatures = set()
+    for i in range(400):
+        day = (datetime.now(timezone.utc).astimezone(zone) + timedelta(days=i)).date()
+        local = datetime(day.year, day.month, day.day, hour, minute, tzinfo=zone)
+        target = local.astimezone(scheduler_zone)
+        signatures.add((target.hour, target.minute, (target.date() - day).days))
+    if len(signatures) != 1: raise WatchError("Não consigo garantir esse horário no fuso informado.")
+    h, m, shift = signatures.pop()
+    daypart = "*" if days == "daily" else ",".join(str((d + 1 + shift) % 7) for d in days)
+    return f"{m} {h} * * {daypart}"
+
+
+def important_schedule(user_zone, runtime=None):
+    parts = [schedule(f"{hour:02d}:29", "daily", user_zone, runtime).split() for hour in (9, 15, 21)]
+    if len({part[0] for part in parts}) != 1:
+        raise WatchError("Não consigo garantir horários de verificação nesse fuso.")
+    return f"{parts[0][0]} {','.join(part[1] for part in parts)} * * *"
+
+
+def check_price(watch, fetch=fetch_page):
+    previous = watch["last_price"]
+    try:
+        result = extract_product(fetch(watch["url"]), watch["url"])
+        if result["currency"] != watch["currency"]: raise WatchError("Moeda da loja mudou.")
+    except Exception as error:
+        LOG.warning("price_read_error watch=%s type=%s", watch["id"], type(error).__name__)
+        watch["last_checked_at"] = now()
+        return ""
+    price = result["price"]
+    watch["last_checked_at"] = now()
+    if price != previous:
+        watch["last_price"] = price
+        watch["lowest_seen_price"] = min(price, watch["lowest_seen_price"])
+        watch["history"].append({"at": watch["last_checked_at"], "price": price})
+        watch["history"] = watch["history"][-100:]
+    typ = watch["target_type"]
+    meets = price < previous and ((typ == "any") or
+        (typ == "absolute" and price <= watch["target_price"]) or
+        (typ == "percentage" and price <= watch["initial_price"] * (1 - watch["target_percentage"] / 100)))
+    # A condition can remain true for many checks; only a new lower price alerts.
+    meets = meets and (watch.get("last_alerted_price") is None or price < watch["last_alerted_price"])
+    LOG.info("price_check watch=%s previous=%s current=%s alert=%s", watch["id"], previous, price, meets)
+    if not meets: return ""
+    watch["last_notified_at"] = now()
+    watch["last_alerted_price"] = price
+    pct = (previous - price) / previous * 100
+    return (f"👀 {watch['name']} caiu.\n{format_price(previous, watch['currency'])} → "
+            f"{format_price(price, watch['currency'])} (queda de {pct:.1f}%).\n{watch['url']}\n"
+            "Quer que eu veja se apareceu mais barato em outras lojas também?")
+
+
+def canonical_story(url):
+    try: return clean_url(url)
+    except WatchError: return None
+
+
+def story_key(title):
+    tokens = re.findall(r"\w+", title.lower())
+    stop = {"de", "do", "da", "o", "a", "em", "and", "the", "for", "com", "para", "sobre", "new"}
+    return set(t for t in tokens if len(t) > 3 and t not in stop)
+
+
+def same_event(left, right):
+    shared = len(left & right)
+    return shared >= 4 and shared / max(1, min(len(left), len(right))) >= .7
+
+
+def search_news(query):
+    from tools.web_tools import web_search_tool
+    try:
+        result = json.loads(web_search_tool(query, limit=6))
+        if result.get("success") and any(x.get("published_date") or x.get("published") or x.get("date") for x in result.get("data", {}).get("web", [])):
+            return result["data"]["web"]
+    except Exception:
+        pass
+    # Public RSS is a bounded, dated fallback when a new cloud install has no
+    # web-search credential or the managed provider is temporarily unavailable.
+    from tools.url_safety import create_ssrf_safe_client
+    rss_url = "https://news.google.com/rss/search?" + urlencode({
+        "q": query[:160], "hl": "pt-BR", "gl": "BR", "ceid": "BR:pt-419"})
+    with create_ssrf_safe_client(timeout=8.0, follow_redirects=False) as client:
+        response = client.get(rss_url, headers={"User-Agent": "PruceNews/1.0"})
+        response.raise_for_status()
+        if len(response.content) > 1_000_000: raise WatchError("Feed de notícias grande demais")
+    root = ElementTree.fromstring(response.content)
+    results = []
+    for item in root.findall("./channel/item")[:12]:
+        title = item.findtext("title") or ""
+        link = item.findtext("link") or ""
+        date = item.findtext("pubDate") or ""
+        source = item.find("source")
+        try: published = parsedate_to_datetime(date).isoformat()
+        except (TypeError, ValueError): continue
+        results.append({"title": title, "url": link, "published_date": published,
+                        "source": source.text if source is not None else "Google Notícias"})
+    return results
+
+
+def collect_news(profile, search=search_news, important=False, today=None):
+    today = today or datetime.now(timezone.utc)
+    candidates, seen, stories, sources = [], set(profile["delivered"]), [], set()
+    old_events = [story_key(title) for title in profile.get("delivered_titles", [])]
+    for interest in profile["interests"][:8]:
+        query = f"{interest} universidade -Flamengo -futebol when:2d" if interest.casefold() == "ufmg" else f"{interest} when:2d"
+        try: results = search(query)
+        except Exception as error:
+            LOG.warning("news_search_error interest_hash=%s type=%s", hashlib.sha256(interest.encode()).hexdigest()[:10], type(error).__name__)
+            continue
+        for item in results[:6]:
+            url = canonical_story(item.get("url") or item.get("href"))
+            title = str(item.get("title") or "").strip()
+            if not url or len(title) < 15 or url in seen or any(same_event(story_key(title), old) for old in old_events): continue
+            if interest.casefold() == "ufmg" and re.search(r"Flamengo|futebol|Brasileirão|campeonato", title, re.I): continue
+            published = item.get("published_date") or item.get("published") or item.get("date")
+            if not published: continue  # no reliable recency evidence
+            try:
+                dt = datetime.fromisoformat(str(published).replace("Z", "+00:00"))
+                if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                if not 0 <= (today - dt).total_seconds() <= 72 * 3600: continue
+            except ValueError: continue
+            if important and not re.search(r"anunci|lanç|aprova|elei|morre|crise|acord|record|announce|launch|release|wins|dies", title, re.I):
+                continue
+            candidates.append({"id": url, "title": title[:180], "url": url, "interest": interest,
+                               "source": item.get("source") or urlsplit(url).hostname,
+                               "published": dt.date().isoformat(), "tokens": story_key(title)})
+            sources.add(str(item.get("source") or urlsplit(url).hostname))
+    duplicates = 0
+    for item in candidates:
+        if item["id"] in seen or any(same_event(item["tokens"], other["tokens"]) for other in stories):
+            duplicates += 1
+            continue
+        stories.append(item)
+        if len(stories) == 6: break
+    interest_hashes = [hashlib.sha256(value.encode()).hexdigest()[:10] for value in profile["interests"][:8]]
+    LOG.info("news_check interest_hashes=%s sources=%d candidates=%d deduplicated=%d sent=%d", interest_hashes, len(sources), len(candidates), duplicates, len(stories))
+    for item in stories: item.pop("tokens", None)
+    return stories
+
+
+def render_news(stories):
+    if not stories: return ""
+    lines = ["☕ Seu Prucê de hoje"]
+    for i, story in enumerate(stories, 1):
+        lines.append(f"{i}. {story['interest'].upper()} — {story['title']} ({story['source']}, {story['published']})\n{story['url']}")
+    lines.append("Quer que eu aprofunde alguma?")
+    return "\n\n".join(lines)
+
+
+def tick(kind, fetch=fetch_page, search=search_news):
+    with locked() as state:
+        messages = []
+        if kind == "price":
+            for watch in state["price_watches"]:
+                if watch["status"] == "active":
+                    msg = check_price(watch, fetch)
+                    if msg: messages.append(msg)
+        elif kind in ("news", "important"):
+            profile = state["news"]
+            mode = (profile.get("schedule") or {}).get("mode")
+            if profile["enabled"] and mode == ("important" if kind == "important" else "digest"):
+                stories = collect_news(profile, search, important=kind == "important")
+                if stories:
+                    messages.append(render_news(stories))
+                    profile["delivered"] = (profile["delivered"] + [s["id"] for s in stories])[-500:]
+                    profile["delivered_titles"] = (profile.get("delivered_titles", []) + [s["title"] for s in stories])[-500:]
+                    profile["last_stories"] = stories
+                    profile["last_digest_at"] = now()
+        save_state(state)
+    return "\n\n".join(messages)
+
+
+def manage(data, fetch=fetch_page, search=search_news, runtime=None):
+    action = data.get("action")
+    with locked() as state:
+        watches, profile = state["price_watches"], state["news"]
+        if action == "inspect_price":
+            url = clean_url(data.get("url"))
+            product = extract_product(fetch(url), url)
+            ident = hashlib.sha256(url.encode()).hexdigest()[:12]
+            watch = next((w for w in watches if w["id"] == ident and w["status"] != "cancelled"), None)
+            if watch: return {"status": "exists", "watch": watch}
+            watch = {"id": ident, "url": url, "canonical_url": url, **product,
+                     "initial_price": product["price"], "last_price": product["price"],
+                     "lowest_seen_price": product["price"], "target_type": None, "target_price": None,
+                     "target_percentage": None, "created_at": now(), "last_checked_at": now(),
+                     "last_notified_at": None, "last_alerted_price": None, "status": "pending",
+                     "history": [{"at": now(), "price": product["price"]}]}
+            del watch["price"]
+            watches.append(watch)
+            save_state(state)
+            LOG.info("price_watch_created watch=%s", ident)
+            return {"status": "pending", "id": ident, "text": f"Encontrei {watch['name']} por {format_price(watch['last_price'], watch['currency'])}. Quer aviso em qualquer queda, abaixo de um preço, ou após uma queda percentual?"}
+        if action == "set_price":
+            watch = find_watch(state, data.get("product"))
+            typ = data.get("target_type")
+            if typ not in ("any", "absolute", "percentage"): raise WatchError("Qual condição de aviso você prefere?")
+            target = money(data.get("target_price")) if typ == "absolute" else None
+            pct = money(data.get("target_percentage")) if typ == "percentage" else None
+            if typ == "absolute" and not target or typ == "percentage" and (not pct or pct >= 100):
+                raise WatchError("Informe um preço ou percentual válido.")
+            # Create/update the single native job before marking this watch active.
+            sync_job("price", True, "17 8,14,20 * * *", runtime=runtime)
+            watch.update(target_type=typ, target_price=target, target_percentage=pct, status="active")
+            save_state(state)
+            return {"status": "active", "text": f"Vou acompanhar {watch['name']} e avisar quando cumprir sua condição."}
+        if action == "list":
+            return {"status": "ok", "price_watches": [w for w in watches if w["status"] == "active"],
+                    "news": {"enabled": profile["enabled"], "interests": profile["interests"], "schedule": profile["schedule"]}}
+        if action == "price_status":
+            watch = find_watch(state, data.get("product"))
+            return {"status": "ok", "watch": watch, "text": f"Começamos em {format_price(watch['initial_price'], watch['currency'])}. Agora está em {format_price(watch['last_price'], watch['currency'])}. Menor preço que vi desde então: {format_price(watch['lowest_seen_price'], watch['currency'])}."}
+        if action == "check_price":
+            watch = find_watch(state, data.get("product"))
+            check_price(watch, fetch)
+            save_state(state)
+            return {"status": "ok", "watch": watch}
+        if action == "cancel_price":
+            watch = find_watch(state, data.get("product"))
+            watch["status"] = "cancelled"
+            if not any(w["status"] == "active" for w in watches): sync_job("price", False, None, runtime=runtime)
+            save_state(state)
+            return {"status": "cancelled", "text": f"Parei de acompanhar {watch['name']}."}
+        if action in ("enable_news", "update_news", "pause_news", "resume_news", "cancel_news", "send_news"):
+            if action in ("enable_news", "update_news"):
+                if action == "enable_news" and data.get("opt_in") is not True:
+                    raise WatchError("Só ativo seu jornal depois do seu pedido explícito.")
+                interests = data.get("interests", profile["interests"])
+                if not isinstance(interests, list) or not all(isinstance(x, str) and 1 <= len(x.strip()) <= 60 for x in interests):
+                    raise WatchError("Quais assuntos você quer acompanhar?")
+                interests = list(dict.fromkeys(x.strip() for x in interests))[:8]
+                if not interests: raise WatchError("Quais assuntos você quer acompanhar?")
+                spec = data.get("schedule", profile["schedule"])
+                if not isinstance(spec, dict) or spec.get("mode") not in ("digest", "important"):
+                    raise WatchError("Quando você quer receber o jornal?")
+                zone = data.get("timezone") or profile.get("timezone")
+                if not zone: raise WatchError("Qual é seu fuso horário?")
+                ZoneInfo(zone)
+                if spec["mode"] == "digest":
+                    days = spec.get("days", "daily")
+                    if days != "daily" and (not isinstance(days, list) or not all(type(x) is int and 0 <= x <= 6 for x in days)):
+                        raise WatchError("Quais dias você quer receber o jornal?")
+                    at = spec.get("time")
+                    if not isinstance(at, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", at):
+                        raise WatchError("Que horas você quer receber o jornal?")
+                    expr = schedule(at, days, zone, runtime)
+                else: expr = important_schedule(zone, runtime)
+                kind = "important" if spec["mode"] == "important" else "news"
+                sync_job(kind, True, expr, runtime=runtime)
+                sync_job("news" if kind == "important" else "important", False, None, runtime=runtime)
+                profile.update(enabled=True, interests=interests, schedule=spec, timezone=zone)
+            elif action == "pause_news":
+                profile["enabled"] = False
+                sync_job("news", False, None, runtime=runtime)
+                sync_job("important", False, None, runtime=runtime)
+            elif action == "resume_news":
+                if not profile["schedule"]: raise WatchError("Configure o jornal antes de retomá-lo.")
+                spec = profile["schedule"]
+                kind = "important" if spec["mode"] == "important" else "news"
+                expr = important_schedule(profile["timezone"], runtime) if kind == "important" else schedule(spec["time"], spec.get("days", "daily"), profile["timezone"], runtime)
+                sync_job(kind, True, expr, runtime=runtime)
+                profile["enabled"] = True
+            elif action == "cancel_news":
+                sync_job("news", False, None, runtime=runtime)
+                sync_job("important", False, None, runtime=runtime)
+                profile.update(enabled=False, interests=[], schedule=None, delivered=[], delivered_titles=[], last_stories=[])
+            elif action == "send_news":
+                if not profile["enabled"]: raise WatchError("Seu jornal ainda não está ativo.")
+                stories = collect_news(profile, search)
+                if stories:
+                    profile["delivered"] = (profile["delivered"] + [s["id"] for s in stories])[-500:]
+                    profile["delivered_titles"] = (profile.get("delivered_titles", []) + [s["title"] for s in stories])[-500:]
+                    profile["last_stories"] = stories
+                    profile["last_digest_at"] = now()
+                save_state(state)
+                return {"status": "ok", "text": render_news(stories) or "Não encontrei notícias novas e verificáveis para seu jornal agora."}
+            save_state(state)
+            return {"status": "ok", "news": profile}
+        if action == "story":
+            index = data.get("index")
+            if type(index) is not int or not 1 <= index <= len(profile["last_stories"]): raise WatchError("Qual notícia do último jornal?")
+            return {"status": "ok", "story": profile["last_stories"][index - 1]}
+    raise WatchError("Não entendi o acompanhamento pedido.")
+
+
+def main():
+    try:
+        if len(sys.argv) >= 3 and sys.argv[1] == "tick":
+            result = tick(sys.argv[2])
+            if result: print(result)
+        else:
+            result = manage(json.load(sys.stdin))
+            print(json.dumps(result, ensure_ascii=False))
+    except Exception as error:
+        if len(sys.argv) >= 2 and sys.argv[1] == "tick":
+            LOG.warning("watch_tick_error type=%s", type(error).__name__)
+        else:
+            print(json.dumps({"status": "error", "text": str(error) if isinstance(error, WatchError) else "Não consegui concluir este acompanhamento agora."}, ensure_ascii=False))
+
+
+if __name__ == "__main__": main()
