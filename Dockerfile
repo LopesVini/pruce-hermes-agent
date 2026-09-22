@@ -1,8 +1,8 @@
-# Base source ef0019372ff8bca593611b31ebd2e08f9f1458ff pins
+# Base source 67021a7029e33e80bcb27899be6515a5a0e9b37b pins
 # hermes-plugin-plow at c21aa5aaefac7d2de3fa47ac46c69f40c2efc68a.
 # It also ships the Agent Index reporter (pinned client + s6 service), which
 # reads AGENT_ID below; this repo carries no reporter of its own.
-FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-ef0019372ff8bca593611b31ebd2e08f9f1458ff@sha256:a8a2f97ad78b8192d80a984dce81d3bf5a9a883d18cb7b677704913a09b56aee
+FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-67021a7029e33e80bcb27899be6515a5a0e9b37b@sha256:0c3892e93c1a001c61fb7106396e0a4b7e0219008184fd90719caa84a3390ff0
 
 # Cloud deploy runs the image directly, without the local Compose environment.
 ENV AGENT_ID=pruce
