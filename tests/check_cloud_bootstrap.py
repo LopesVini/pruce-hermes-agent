@@ -100,7 +100,7 @@ def scenario(image, name, baseline=False, existing=False, first_contact_before_c
             else:
                 print("EXISTING CHAT: empty volume boots and native Plow socket connects")
         facts = json.loads(python(agent, "from pathlib import Path;import json,os,yaml;env=Path('/run/s6/container_environment');home=Path('/var/lib/hermes');config=yaml.safe_load((home/'config.yaml').read_text());print(json.dumps({'id':(env/'AGENT_ID').read_text().strip(),'proxy':(env/'PLOW_AGENT_TOKEN').read_text().strip()=='proxied','mac':(env/'PLOW_MCP_URL').exists(),'credentials':Path('/var/lib/plow/credentials').exists(),'persona':(home/'SOUL.md').exists(),'ru':(home/'skills/pruce-ru/SKILL.md').exists(),'model':config['model']['default'],'timezone':os.environ.get('HERMES_TIMEZONE')}))"))
-        assert facts == {"id": "pruce", "proxy": True, "mac": False, "credentials": False, "persona": True, "ru": True, "model": "anthropic/claude-sonnet-5", "timezone": "UTC"}, facts
+        assert facts == {"id": "pruce", "proxy": True, "mac": False, "credentials": False, "persona": True, "ru": True, "model": "z-ai/glm-5.2", "timezone": "UTC"}, facts
         assert not parked(agent)
         if not existing:
             # Valid canonical state and disposable ledgers, never a developer's home.

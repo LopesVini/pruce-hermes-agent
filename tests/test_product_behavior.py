@@ -160,6 +160,8 @@ class ProductBehaviorTests(unittest.TestCase):
         compose = (ROOT / "compose.yml").read_text()
         self.assertIn("base-ef0019372ff8bca593611b31ebd2e08f9f1458ff", dockerfile)
         self.assertIn("c21aa5aaefac7d2de3fa47ac46c69f40c2efc68a", dockerfile)
+        self.assertNotIn("HERMES_MODEL=", dockerfile)
+        self.assertIn("ENV HERMES_TIMEZONE=UTC", dockerfile)
         self.assertIn("env_file:", compose)
         self.assertNotIn("/var/lib/plow/credentials.host", compose)
 

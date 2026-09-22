@@ -6,9 +6,10 @@ FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-ef0019372ff8bca593611b31ebd2
 
 # Cloud deploy runs the image directly, without the local Compose environment.
 ENV AGENT_ID=pruce
-# Keep the runtime defaults used before the reporter migration. The new base
-# otherwise selects GLM-5.2 and a Los Angeles clock for this variant.
-ENV HERMES_MODEL=anthropic/claude-sonnet-5 HERMES_TIMEZONE=UTC
+# Keep the variant's neutral clock until the owner supplies a timezone. The
+# pinned Plow base owns the text model default (GLM-5.2) and its vision lane;
+# do not override HERMES_MODEL here.
+ENV HERMES_TIMEZONE=UTC
 
 # Official Hermes bridge, installed from its shipped lockfile; no custom adapter.
 RUN cd /opt/hermes/scripts/whatsapp-bridge \
