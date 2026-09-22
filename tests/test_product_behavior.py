@@ -158,7 +158,7 @@ class ProductBehaviorTests(unittest.TestCase):
     def test_current_base_and_environment_credentials_are_pinned(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
         compose = (ROOT / "compose.yml").read_text()
-        self.assertIn("base-ef0019372ff8bca593611b31ebd2e08f9f1458ff", dockerfile)
+        self.assertIn("base-67021a7029e33e80bcb27899be6515a5a0e9b37b", dockerfile)
         self.assertIn("c21aa5aaefac7d2de3fa47ac46c69f40c2efc68a", dockerfile)
         self.assertNotIn("HERMES_MODEL=", dockerfile)
         self.assertIn("ENV HERMES_TIMEZONE=UTC", dockerfile)
